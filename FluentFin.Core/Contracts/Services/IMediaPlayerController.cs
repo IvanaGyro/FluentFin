@@ -1,4 +1,5 @@
-﻿using System.Reactive;
+﻿using System.Runtime.InteropServices;
+using System.Reactive;
 
 namespace FluentFin.Core.Contracts.Services;
 
@@ -50,6 +51,13 @@ public enum MediaPlayerType
 	Vlc,
 	Flyleaf,
 	WindowsMediaPlayer
+}
+
+public static class MediaPlayerTypeExtensions
+{
+	// TODO: VLC 3.x has no native arm64 Windows build (an arm64 process can't load x64 libvlc), so it is unavailable on arm64
+	public static bool IsSupported(this MediaPlayerType type) =>
+		type != MediaPlayerType.Vlc || RuntimeInformation.ProcessArchitecture != Architecture.Arm64;
 }
 
 public record struct AudioTrack(int Id, string? Language, string? Name);

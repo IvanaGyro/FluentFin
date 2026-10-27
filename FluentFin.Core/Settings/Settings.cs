@@ -22,7 +22,11 @@ public partial class Settings(ILocalSettingsService localSettingsService) : Obse
 	
 	public MediaPlayerType MediaPlayer
 	{
-		get => localSettingsService.ReadSetting(SettingKeys.MediaPlayerType);
+		get
+		{
+			var type = localSettingsService.ReadSetting(SettingKeys.MediaPlayerType);
+			return type.IsSupported() ? type : MediaPlayerType.Flyleaf;
+		}
 		set => localSettingsService.SaveSetting(SettingKeys.MediaPlayerType, value);
 	}
 

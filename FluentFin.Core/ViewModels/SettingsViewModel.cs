@@ -11,6 +11,8 @@ public partial class SettingsViewModel(ISettings settings) : ObservableObject, I
 {
 	public ObservableCollection<SavedServer> Servers { get; } = settings.Servers;
 
+	public IReadOnlyList<MediaPlayerType> MediaPlayerTypes { get; } = [.. Enum.GetValues<MediaPlayerType>().Where(x => x.IsSupported())];
+
 	public MediaPlayerType MediaPlayerType
 	{
 		get => field;

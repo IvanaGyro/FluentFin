@@ -61,7 +61,7 @@
                 </ItemsRepeater.ItemTemplate>
             </ItemsRepeater>
             <ctk:SettingsCard Header="Media Player" HeaderIcon="{ui:FontIcon Glyph=&#xEA69;}">
-                <ComboBox ItemsSource="{ui:EnumValues Type=s:MediaPlayerType}" SelectedItem="{x:Bind ViewModel.MediaPlayerType, Mode=TwoWay}" />
+                <ComboBox ItemsSource="{x:Bind ViewModel.MediaPlayerTypes}" SelectedItem="{x:Bind ViewModel.MediaPlayerType, Mode=TwoWay}" />
             </ctk:SettingsCard>
         </StackPanel>
 

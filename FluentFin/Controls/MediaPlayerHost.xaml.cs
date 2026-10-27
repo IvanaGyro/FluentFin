@@ -7,7 +7,6 @@ using FluentFin.Core.Contracts.Services;
 using FluentFin.Core.ViewModels;
 using FluentFin.MediaPlayers;
 using FluentFin.ViewModels;
-using System.Runtime.InteropServices;
 using FlyleafLib.Controls.WinUI;
 using LibVLCSharp.Platforms.Windows;
 using Microsoft.UI.Input;
@@ -76,8 +75,6 @@ public sealed partial class MediaPlayerHost : UserControl
 
 				UIElement host = type switch
 				{
-					// VLC 3.x has no native arm64 build, so use Flyleaf there
-					Core.Contracts.Services.MediaPlayerType.Vlc when RuntimeInformation.ProcessArchitecture == Architecture.Arm64 => CreateFlyleaf(),
 					Core.Contracts.Services.MediaPlayerType.Vlc => CreateVLC(),
 					Core.Contracts.Services.MediaPlayerType.Flyleaf => CreateFlyleaf(),
 					Core.Contracts.Services.MediaPlayerType.WindowsMediaPlayer => CreateWindowsMediaPlayer(),
