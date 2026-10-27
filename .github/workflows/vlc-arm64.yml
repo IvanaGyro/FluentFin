@@ -1,0 +1,26 @@
+name: vlc arm64
+on: push
+jobs:
+  vlc:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0'
+      - name: Download VLC arm64
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://get.videolan.org/vlc/3.0.24/winarm64/vlc-3.0.24-winarm64.7z -OutFile vlc.7z
+          Invoke-WebRequest https://get.videolan.org/vlc/3.0.24/winarm64/vlc-3.0.24-winarm64.7z.sha256 -OutFile vlc.sha256
+          Get-Content vlc.sha256
+          (Get-FileHash vlc.7z -Algorithm SHA256).Hash
+          7z x vlc.7z -ovlc | Select-Object -Last 3
+          Get-ChildItem vlc | Format-Table Name
+          $root = (Get-ChildItem vlc -Directory | Select-Object -First 1).FullName
+          New-Item -ItemType Directory -Force libvlc\win-arm64 | Out-Null
+          Copy-Item "$root\libvlc.dll","$root\libvlccore.dll" libvlc\win-arm64\
+          Copy-Item "$root\plugins" libvlc\win-arm64\plugins -Recurse
+          "{0} plugin dlls, {1:N0} MB" -f (Get-ChildItem libvlc\win-arm64\plugins -Recurse -Filter *.dll).Count, ((Get-ChildItem libvlc\win-arm64 -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+      - name: Load libvlc in-process
+        run: dotnet run .github\tmp\vlc.cs -- libvlc\win-arm64

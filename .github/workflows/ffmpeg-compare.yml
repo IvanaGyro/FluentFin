@@ -6,22 +6,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: x64-checked-in, runner: windows-latest, src: repo }
-          - { name: x64-btbn-gpl, runner: windows-latest, src: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip' }
-          - { name: arm64-btbn-gpl, runner: windows-11-arm, src: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip' }
-          - { name: arm64-btbn-lgpl, runner: windows-11-arm, src: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-lgpl-shared.zip' }
+          - name: x64-checked-in
+            runner: windows-latest
+            src: repo
+          - name: x64-btbn-gpl
+            runner: windows-latest
+            src: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip
+          - name: arm64-btbn-gpl
+            runner: windows-11-arm
+            src: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip
+          - name: arm64-btbn-lgpl
+            runner: windows-11-arm
+            src: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-lgpl-shared.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '10.0' }
+        with:
+          dotnet-version: '10.0'
       - name: Fetch dlls
         shell: pwsh
+        env:
+          SRC: ${{ matrix.src }}
         run: |
           New-Item -ItemType Directory -Force dlls | Out-Null
-          if ('${{ matrix.src }}' -eq 'repo') { Copy-Item FluentFin\FFMpeg\*.dll dlls\ }
+          if ($env:SRC -eq 'repo') { Copy-Item FluentFin\FFMpeg\*.dll dlls\ }
           else {
-            Invoke-WebRequest '${{ matrix.src }}' -OutFile f.zip
+            Invoke-WebRequest $env:SRC -OutFile f.zip
             Expand-Archive f.zip -DestinationPath ex
             Get-ChildItem ex -Recurse -Filter *.dll | Copy-Item -Destination dlls\
           }
@@ -29,4 +40,6 @@ jobs:
       - name: Dump capabilities
         run: dotnet run .github\tmp\dump.cs -- dlls ${{ matrix.name }}.txt
       - uses: actions/upload-artifact@v4
-        with: { name: dump-${{ matrix.name }}, path: '${{ matrix.name }}.txt' }
+        with:
+          name: dump-${{ matrix.name }}
+          path: ${{ matrix.name }}.txt
