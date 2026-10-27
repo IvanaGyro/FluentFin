@@ -1,0 +1,57 @@
+name: installers preview
+on: push
+env:
+  MAIN_PROJECT_PATH: 'FluentFin\FluentFin.csproj'
+  PUBLISH_FOLDER: 'FluentFin\bin\publish'
+  PUBLISH_FOLDER_ARM64: 'FluentFin\bin\publish-arm64'
+  CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
+  FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0'
+      - run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
+      - name: Build Project
+        run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ env.PUBLISH_FOLDER }}\ /property:BuildVersion=0.0.1
+      - name: Download arm64 FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
+          Expand-Archive ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64
+          New-Item -ItemType Directory -Force FluentFin\FFMpeg-arm64 | Out-Null
+          foreach ($x64 in Get-ChildItem FluentFin\FFMpeg\*.dll) {
+              $match = Get-ChildItem ffmpeg-arm64 -Recurse -Filter $x64.Name | Select-Object -First 1
+              if (-not $match) { throw "arm64 FFmpeg is missing $($x64.Name)" }
+              Copy-Item $match.FullName FluentFin\FFMpeg-arm64\
+          }
+      - name: Build Project (arm64)
+        run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-arm64 -p:Platform=arm64 -o ${{ env.PUBLISH_FOLDER_ARM64 }}\ /property:BuildVersion=0.0.1
+      - name: Create Windows Installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        with:
+          path: Installer\script.iss
+          options: /O+
+      - name: Create Windows Installer (arm64)
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
+        with:
+          path: Installer\script.iss
+          options: /O+ /DArch=arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FluentFin-installers
+          path: Installer\Output\*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FluentFin-win-arm64-publish
+          path: FluentFin\bin\publish-arm64\
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FluentFin-win-x64-publish
+          path: FluentFin\bin\publish\
+          if-no-files-found: error
