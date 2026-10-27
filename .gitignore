@@ -370,3 +370,4 @@ graphify-out/
 
 # Claude Code local settings
 .claude/settings.local.json
+FluentFin/FFMpeg-arm64/
