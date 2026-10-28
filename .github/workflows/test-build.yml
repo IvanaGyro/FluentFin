@@ -33,10 +33,19 @@ jobs:
     - name: Add Windows Community Toolkit labs nuget source
       run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
 
+    # refs created before the ARM64 work (no win-arm64 handling in the csproj) are built for x64 only
+    - name: Detect arm64 support
+      id: arm
+      shell: pwsh
+      run: |
+        $ok = (Select-String -Path FluentFin\FluentFin.csproj -Pattern 'win-arm64' -Quiet) -and (Select-String -Path Installer\script.iss -Pattern 'Arch' -Quiet)
+        "supported=$($ok.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
     - name: Build x64
       run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ env.PUBLISH_FOLDER }}\ /property:BuildVersion=0.0.1
 
     - name: Download arm64 FFmpeg
+      if: steps.arm.outputs.supported == 'true'
       shell: pwsh
       run: |
         Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
@@ -49,6 +58,7 @@ jobs:
         }
 
     - name: Build arm64
+      if: steps.arm.outputs.supported == 'true'
       run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-arm64 -p:Platform=arm64 -o ${{ env.PUBLISH_FOLDER_ARM64 }}\ /property:BuildVersion=0.0.1
 
     - name: Installer x64
@@ -58,6 +68,7 @@ jobs:
         options: /O+
 
     - name: Installer arm64
+      if: steps.arm.outputs.supported == 'true'
       uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
       with:
         path: Installer\script.iss
@@ -80,6 +91,7 @@ jobs:
         retention-days: 7
 
     - name: Upload arm64 publish
+      if: steps.arm.outputs.supported == 'true'
       id: up3
       uses: actions/upload-artifact@v4
       with:
@@ -94,5 +106,9 @@ jobs:
           echo "### Artifacts for \`${{ inputs.ref }}\`"
           echo "- [installers](${{ steps.up1.outputs.artifact-url }})"
           echo "- [x64 publish](${{ steps.up2.outputs.artifact-url }})"
-          echo "- [arm64 publish](${{ steps.up3.outputs.artifact-url }})"
+          if [ "${{ steps.arm.outputs.supported }}" = true ]; then
+            echo "- [arm64 publish](${{ steps.up3.outputs.artifact-url }})"
+          else
+            echo "- arm64 skipped: this ref has no arm64 support"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
