@@ -36,7 +36,6 @@ jobs:
     - name: Build x64
       run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ env.PUBLISH_FOLDER }}\ /property:BuildVersion=0.0.1
 
-    # skipped automatically if the ref has no arm64 support (no FFMpeg-arm64 handling in the csproj)
     - name: Download arm64 FFmpeg
       shell: pwsh
       run: |
