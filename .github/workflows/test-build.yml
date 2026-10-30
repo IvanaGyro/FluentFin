@@ -24,6 +24,14 @@ jobs:
       with:
         ref: ${{ inputs.ref }}
 
+    # refs created before the build cache existed do not have the action and build from scratch
+    - name: Restore build cache
+      if: hashFiles('.github/actions/build-cache/action.yml') != ''
+      uses: ./.github/actions/build-cache
+      with:
+        prefix: master-build
+        branch: ${{ inputs.ref }}
+
     - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0'
