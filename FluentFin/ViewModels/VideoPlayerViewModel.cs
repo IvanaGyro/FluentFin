@@ -267,7 +267,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var success = MediaPlayer.Play(mediaResponse.Uri, mediaResponse.MediaSourceInfo.DefaultAudioStreamIndex ?? 0);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL}", mediaResponse.Uri);
+			logger.LogError("Unable to open media from {URL} ({Playback})", RedactUrl(mediaResponse.Uri), DescribePlayback());
 			await StopPlayback();
 			return;
 		}
@@ -340,6 +340,25 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		_ => null,
 	};
 
+	private string DescribePlayback()
+	{
+		var item = Playlist.SelectedItem;
+		var media = item?.Media;
+
+		return $"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
+			$"PlaySessionId: {_session?.PlaySessionId ?? media?.PlaybackSessionId}, " +
+			$"MediaSourceId: {media?.MediaSourceId}, " +
+			$"PlayMethod: {media?.PlayMethod}, " +
+			$"Container: {media?.MediaSourceInfo.Container}, " +
+			$"Player: {MediaPlayerType}, " +
+			$"PlayerState: {MediaPlayer?.State}, " +
+			$"Position: {MediaPlayer?.Position}, " +
+			$"Url: {(media is null ? null : RedactUrl(media.Uri))}";
+	}
+
+	// the media url carries the access token
+	private static string RedactUrl(Uri uri) => new Url(uri).RemoveQueryParams("ApiKey", "api_key").ToString();
+
 	private PlaybackState GetPlaybackState(IMediaPlayerController mp) => new(
 		mp.Position.Ticks,
 		!mp.IsPlaying,
@@ -390,7 +409,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		mp.Stopped.ObserveOn(RxSchedulers.MainThreadScheduler).Where(_ => mp.State is MediaPlayerState.Stopped).Subscribe(async _ => await StopPlayback(stopPlayer: false));
 		mp.Errored.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(async _ =>
 		{
-			logger.LogError("An error occurred while playing media");
+			// described before the session is stopped, the backends do not report what went wrong
+			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
 			await StopPlayback();
 		});
 		mp.PositionChanged
