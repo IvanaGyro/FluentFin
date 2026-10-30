@@ -352,6 +352,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			$"Container: {media?.MediaSourceInfo.Container}, " +
 			$"Player: {MediaPlayerType}, " +
 			$"PlayerState: {MediaPlayer?.State}, " +
+			$"PlayerError: {MediaPlayer?.LastError}, " +
 			$"Position: {MediaPlayer?.Position}, " +
 			$"Url: {(media is null ? null : RedactUrl(media.Uri))}";
 	}
