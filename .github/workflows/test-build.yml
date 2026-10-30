@@ -74,13 +74,34 @@ jobs:
       with:
         ref: ${{ inputs.ref }}
 
-    # refs created before the build cache existed do not have the action and build from scratch
-    - name: Restore build cache
-      if: hashFiles('.github/actions/build-cache/action.yml') != ''
-      uses: ./.github/actions/build-cache
+    # Start from the newest cache of this ref, else master's (made by the master-cache job). The cache is saved when the
+    # job succeeds, so the next build of the same ref starts from this one.
+    - id: cache
+      uses: actions/cache@v4
       with:
-        prefix: master-build
-        branch: ${{ inputs.ref }}
+        key: master-build-branch-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          master-build-branch-${{ inputs.ref }}-
+          master-build-
+        path: |
+          ~/.nuget/packages
+          **/obj
+          .build-cache-sha
+
+    # msbuild compares file timestamps and a fresh checkout stamps every file "now", which would rebuild everything.
+    # Files unchanged since the cached build get an old timestamp again.
+    - if: steps.cache.outputs.cache-matched-key != ''
+      shell: bash
+      run: |
+        base=$(cat .build-cache-sha 2>/dev/null || true)
+        [ -n "$base" ] || exit 0
+        git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$base" || { echo "cached commit unavailable, building from scratch"; exit 0; }
+        git -c core.quotepath=false diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt" || exit 0
+        git -c core.quotepath=false ls-files | grep -vxFf "$RUNNER_TEMP/changed.txt" | xargs -d '\n' touch -d '2000-01-01' || true
+        echo "Restored ${{ steps.cache.outputs.cache-matched-key }}; $(wc -l < "$RUNNER_TEMP/changed.txt") files differ from cached build $base"
+
+    - shell: bash
+      run: git rev-parse HEAD > .build-cache-sha
 
     - uses: actions/setup-dotnet@v4
       with:
