@@ -153,6 +153,18 @@ jobs:
         path: Installer\script.iss
         options: /O+ /DArch=arm64
 
+    # actions/upload-artifact only zips (deflate, level 9 at best). 7z (LZMA2, solid) makes the publish folders much
+    # smaller (the installers are already LZMA compressed by Inno Setup, so they stay as they are); the artifact zip then only stores the .7z (compression-level 0), so nothing is compressed twice.
+    - name: Compress with 7z
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force compressed | Out-Null
+        7z a -t7z -mx=9 -md=128m -mfb=273 -ms=on compressed\FluentFin-win-x64-publish.7z ".\${{ env.PUBLISH_FOLDER }}\*"
+        if ('${{ steps.arm.outputs.supported }}' -eq 'true') {
+          7z a -t7z -mx=9 -md=128m -mfb=273 -ms=on compressed\FluentFin-win-arm64-publish.7z ".\${{ env.PUBLISH_FOLDER_ARM64 }}\*"
+        }
+        Get-ChildItem compressed | Format-Table Name, Length
+
     - name: Upload installers
       id: up1
       uses: actions/upload-artifact@v4
@@ -166,7 +178,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluentFin-win-x64-publish
-        path: ${{ env.PUBLISH_FOLDER }}
+        path: compressed\FluentFin-win-x64-publish.7z
+        compression-level: 0
         retention-days: 7
 
     - name: Upload arm64 publish
@@ -175,7 +188,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluentFin-win-arm64-publish
-        path: ${{ env.PUBLISH_FOLDER_ARM64 }}
+        path: compressed\FluentFin-win-arm64-publish.7z
+        compression-level: 0
         retention-days: 7
 
     - name: Artifact links
