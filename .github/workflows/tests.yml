@@ -13,6 +13,11 @@ jobs:
     -   name: 'Checkout'
         uses: actions/checkout@v4
 
+    -   name: 'Restore build cache'
+        uses: ./.github/actions/build-cache
+        with:
+            prefix: master-tests
+
     -   name: 'Install dotnet'
         uses: actions/setup-dotnet@v4
         with:
