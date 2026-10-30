@@ -1,0 +1,52 @@
+name: "Master tests cache"
+
+# Builds master's Core tests and saves the NuGet packages and obj folders, so tests.yml (through
+# .github/actions/build-cache) only rebuilds what a branch changed. The app's master cache is kept current by
+# test-build.yml. The push run fills master's cache scope (read by pull requests targeting master); the scheduled
+# and manual runs execute on the default branch.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: 'Tests build cache'
+    runs-on: ubuntu-latest
+    steps:
+    -   uses: actions/checkout@v4
+        with:
+          ref: master
+
+    -   id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    -   id: cache
+        uses: actions/cache/restore@v4
+        with:
+          key: master-tests-${{ steps.sha.outputs.sha }}
+          lookup-only: true
+          path: .build-cache-sha
+
+    -   if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0'
+
+    # same command as tests.yml
+    -   if: steps.cache.outputs.cache-hit != 'true'
+        run: dotnet test FluentFin.Core.Tests/FluentFin.Core.Tests.csproj
+
+    -   if: steps.cache.outputs.cache-hit != 'true'
+        run: echo "${{ steps.sha.outputs.sha }}" > .build-cache-sha
+
+    -   if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: master-tests-${{ steps.sha.outputs.sha }}
+          path: |
+            ~/.nuget/packages
+            **/obj
+            .build-cache-sha

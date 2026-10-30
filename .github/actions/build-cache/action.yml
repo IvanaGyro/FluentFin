@@ -3,7 +3,7 @@ description: >
   Restores the NuGet packages and obj folders of the newest earlier build of this branch, or of master when the branch
   has none yet, and back-dates every file identical to that build so msbuild skips projects whose inputs did not change.
   Saves a new cache for the branch when the job succeeds. Run it right after checkout.
-  Master's caches are made by master-build-cache.yml.
+  Master's caches are made by test-build.yml (app, master-build) and master-tests-cache.yml (Core tests, master-tests).
 
 inputs:
   prefix:

@@ -17,7 +17,57 @@ env:
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
 
 jobs:
+  # Keeps master's build cache current: when master has a commit that is not cached yet, build it and save the
+  # NuGet packages and obj folders, which the build job (through .github/actions/build-cache) starts from.
+  master-cache:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: master
+
+    - id: sha
+      shell: bash
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    # only checks whether this master commit is cached, nothing is downloaded
+    - id: cache
+      uses: actions/cache/restore@v4
+      with:
+        key: master-build-${{ steps.sha.outputs.sha }}
+        lookup-only: true
+        path: .build-cache-sha
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0'
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: microsoft/setup-msbuild@v2
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
+
+    # same command (configuration, runtime, platform) as the Build x64 step, so the obj folders match
+    - if: steps.cache.outputs.cache-hit != 'true'
+      run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ runner.temp }}\master-publish\ /property:BuildVersion=0.0.1
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: echo "${{ steps.sha.outputs.sha }}" > .build-cache-sha
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        key: master-build-${{ steps.sha.outputs.sha }}
+        path: |
+          ~/.nuget/packages
+          **/obj
+          .build-cache-sha
+
   build:
+    needs: master-cache
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
