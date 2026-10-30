@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DynamicData;
 using FluentFin.Contracts.Services;
 using FluentFin.Contracts.ViewModels;
+using FluentFin.Core;
 using FluentFin.Core.Contracts.Services;
 using FluentFin.Core.Services;
 using FluentFin.Core.Settings;
@@ -267,7 +268,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var success = MediaPlayer.Play(mediaResponse.Uri, mediaResponse.MediaSourceInfo.DefaultAudioStreamIndex ?? 0);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL} ({Playback})", RedactUrl(mediaResponse.Uri), DescribePlayback());
+			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
 			await StopPlayback();
 			return;
 		}
@@ -345,7 +346,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var item = Playlist.SelectedItem;
 		var media = item?.Media;
 
-		return $"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
+		// the players repeat the url in their error messages
+		return ($"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
 			$"PlaySessionId: {_session?.PlaySessionId ?? media?.PlaybackSessionId}, " +
 			$"MediaSourceId: {media?.MediaSourceId}, " +
 			$"PlayMethod: {media?.PlayMethod}, " +
@@ -354,11 +356,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			$"PlayerState: {MediaPlayer?.State}, " +
 			$"PlayerError: {MediaPlayer?.LastError}, " +
 			$"Position: {MediaPlayer?.Position}, " +
-			$"Url: {(media is null ? null : RedactUrl(media.Uri))}";
+			$"Url: {media?.Uri}").MaskApiKey();
 	}
-
-	// the media url carries the access token
-	private static string RedactUrl(Uri uri) => new Url(uri).RemoveQueryParams("ApiKey", "api_key").ToString();
 
 	private PlaybackState GetPlaybackState(IMediaPlayerController mp) => new(
 		mp.Position.Ticks,
