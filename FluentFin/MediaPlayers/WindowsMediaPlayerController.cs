@@ -43,6 +43,8 @@ namespace FluentFin.MediaPlayers
 		public bool IsMuted => _mp.SafeGetValue(mp => mp.IsMuted, false);
 		public int? SubtitleTrackIndex => null;
 		public int? AudioTrackIndex => null;
+
+		public int SubtitleTrackCount => _mediaItem?.TimedMetadataTracks.Count(x => x.TimedMetadataKind == TimedMetadataKind.Subtitle) ?? 0;
 		public double Volume
 		{
 			get
