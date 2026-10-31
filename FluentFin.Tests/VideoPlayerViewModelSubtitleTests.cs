@@ -28,10 +28,14 @@ public sealed class VideoPlayerViewModelSubtitleTests
 	[Fact]
 	public async Task TranscodeWithWindowsMediaPlayer_LoadsTheEmbeddedSubtitleFromItsDeliveryUrl()
 	{
-		// a transcode with the profile of the Windows media player, which lists subrip as External only: the subtitle is embedded in
-		// the file (IsExternal is false) and the server delivers it as a file, the transcoded stream has no subtitle track
-		var subtitle = EmbeddedSubtitle(13, "External", "/Videos/36e98edb/36e98edbf5ea353282a27966f62fb8f1/Subtitles/13/0/Stream.subrip?ApiKey=token");
-		var response = Response(PlaybackProgressInfo_PlayMethod.Transcode, subtitle);
+		// a transcode with the profile of the Windows media player, which lists subrip as External only: the subtitles (streams 11 to 15
+		// of a file with ten audio streams) are embedded in the file (IsExternal is false) and the server delivers them as files, the
+		// transcoded stream has no subtitle track
+		var subtitles = Enumerable.Range(11, 5)
+			.Select(index => EmbeddedSubtitle(index, "External", $"/Videos/36e98edb/36e98edbf5ea353282a27966f62fb8f1/Subtitles/{index}/0/Stream.subrip?ApiKey=token"))
+			.ToArray();
+		var subtitle = subtitles[2];
+		var response = Response(PlaybackProgressInfo_PlayMethod.Transcode, subtitles);
 
 		await CreateViewModel().OpenSubtitlesWhenReady(_player.Object, ItemPlaying(response), response, subtitle);
 
@@ -76,12 +80,15 @@ public sealed class VideoPlayerViewModelSubtitleTests
 		Media = response,
 	};
 
-	/// <summary>The streams of a file as the server lists them: numbered one after the other, every stream has a kind and a codec.</summary>
+	/// <summary>The streams of a file as the server lists them: a video, the audio streams up to the first subtitle, then the subtitles.</summary>
 	private static MediaResponse Response(PlaybackProgressInfo_PlayMethod playMethod, params MediaStream[] subtitles)
 	{
 		var video = new MediaStream { Index = 0, Type = MediaStream_Type.Video, Codec = "h264", IsExternal = false };
-		var audio = new MediaStream { Index = 1, Type = MediaStream_Type.Audio, Codec = "eac3", IsExternal = false };
-		var source = new MediaSourceInfo { Id = "36e98edbf5ea353282a27966f62fb8f1", Container = "mkv", MediaStreams = [video, audio, .. subtitles] };
+		var audio = Enumerable.Range(1, subtitles[0].Index!.Value - 1)
+			.Select(index => new MediaStream { Index = index, Type = MediaStream_Type.Audio, Codec = "eac3", IsExternal = false });
+		var source = new MediaSourceInfo { Id = "36e98edbf5ea353282a27966f62fb8f1", Container = "mkv", MediaStreams = [video, .. audio, .. subtitles] };
+
+		// the server numbers the streams of a file one after the other and every stream has a codec
 
 		var streams = source.MediaStreams!;
 		Assert.Equal(Enumerable.Range(0, streams.Count), streams.Select(x => x.Index!.Value));
