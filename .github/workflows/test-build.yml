@@ -15,6 +15,8 @@ env:
   PUBLISH_FOLDER_ARM64: 'FluentFin\bin\publish-arm64'
   FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
+  # NuGet packages on the runner's D: drive (where the workspace is): extracting the NuGet cache to C: is much slower
+  NUGET_PACKAGES: 'D:\nuget-packages'
 
 jobs:
   # Cheap check on a Linux runner: is master's current commit already in the build cache?
@@ -54,7 +56,7 @@ jobs:
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
         restore-keys: nuget-
-        path: ~/.nuget/packages
+        path: D:\nuget-packages
 
     - uses: actions/setup-dotnet@v4
       with:
@@ -94,7 +96,7 @@ jobs:
       uses: actions/cache/save@v4
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
-        path: ~/.nuget/packages
+        path: D:\nuget-packages
 
   build:
     needs: [master-check, master-build]
@@ -112,7 +114,7 @@ jobs:
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
         restore-keys: nuget-
-        path: ~/.nuget/packages
+        path: D:\nuget-packages
 
     # obj folders of the newest earlier build of this ref, else of master's latest build
     - id: obj
@@ -276,8 +278,7 @@ jobs:
           **/obj
           .build-cache-sha
 
-    - if: steps.stamps.outputs.base != steps.head.outputs.sha
-      uses: actions/cache/save@v4
+    - uses: actions/cache/save@v4
       with:
         key: archives-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: compressed
@@ -286,4 +287,4 @@ jobs:
       uses: actions/cache/save@v4
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
-        path: ~/.nuget/packages
+        path: D:\nuget-packages
