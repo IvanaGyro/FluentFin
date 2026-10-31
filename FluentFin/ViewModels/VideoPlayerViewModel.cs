@@ -249,10 +249,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			? mediaResponse.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Audio).ToList().FindIndex(x => x.Index == selectedAudio)
 			: null;
 
+		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
+
 		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal is >= 0 ? audioOrdinal : null);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL}", mediaResponse.Uri);
+			logger.LogError("Unable to open media from {URL}", RedactApiKey(mediaResponse.Uri));
 		}
 
 		PlayMethod = mediaResponse.PlayMethod;
@@ -268,6 +270,35 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		await JellyfinClient.Playing(selectedItem.Dto);
+	}
+
+	private static string RedactApiKey(Uri uri) => uri.SetQueryParam("ApiKey", "***").ToString();
+
+	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
+	{
+		var source = response.MediaSourceInfo;
+
+		logger.LogInformation(
+			"Playing {Name} ({Id}): method={PlayMethod}, container={Container}, bitrate={Bitrate}, size={Size}, directPlay={DirectPlay}, directStream={DirectStream}, transcoding={Transcoding}",
+			item.Name, item.Id, response.PlayMethod, source.Container, source.Bitrate, source.Size, source.SupportsDirectPlay, source.SupportsDirectStream, source.SupportsTranscoding);
+
+		logger.LogInformation(
+			"Stream selection: page selection (audio={SelectedAudio}, subtitle={SelectedSubtitle}), server defaults (audio={DefaultAudio}, subtitle={DefaultSubtitle}), used (audio={UsedAudio}, subtitle={UsedSubtitle})",
+			selection?.AudioStreamIndex, selection?.SubtitleStreamIndex, source.DefaultAudioStreamIndex, source.DefaultSubtitleStreamIndex, audioIndex, subtitleIndex);
+
+		logger.LogInformation("Stream URL: {Url}", RedactApiKey(response.Uri));
+
+		if (response.PlayMethod == PlaybackProgressInfo_PlayMethod.Transcode)
+		{
+			logger.LogInformation("Transcode: container={Container}, protocol={Protocol}", source.TranscodingContainer, source.TranscodingSubProtocol);
+		}
+
+		foreach (var stream in source.MediaStreams ?? [])
+		{
+			logger.LogInformation(
+				"Source stream #{Index} {Type}: codec={Codec}, language={Language}, title={Title}, {Width}x{Height}, channels={Channels}, bitrate={Bitrate}, default={Default}, external={External}",
+				stream.Index, stream.Type, stream.Codec, stream.Language, stream.DisplayTitle, stream.Width, stream.Height, stream.Channels, stream.BitRate, stream.IsDefault, stream.IsExternal);
+		}
 	}
 
 	private void OpenSubtitles(IMediaPlayerController mp, MediaResponse response, MediaStream stream)
@@ -343,6 +374,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		_playbackProgressInfo.PlayMethod = PlayMethod;
 		_playbackProgressInfo.AudioStreamIndex = MediaPlayer.AudioTrackIndex;
 		_playbackProgressInfo.SubtitleStreamIndex = MediaPlayer.SubtitleTrackIndex;
+		logger.LogDebug("Player status: item={Id}, method={PlayMethod}, position={Position}, state={State}, audioTrack={AudioTrack}, subtitleTrack={SubtitleTrack}",
+			_playbackProgressInfo.ItemId, PlayMethod, MediaPlayer.Position, MediaPlayer.State, MediaPlayer.AudioTrackIndex, MediaPlayer.SubtitleTrackIndex);
 		_playbackProgressInfo.PlaybackStartTimeTicks = TimeProvider.System.GetTimestamp();
 		_playbackProgressInfo.SessionId = media.PlaybackSessionId;
 		_playbackProgressInfo.MediaSourceId = media.MediaSourceId;
