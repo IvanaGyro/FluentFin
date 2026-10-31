@@ -17,91 +17,134 @@ env:
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
 
 jobs:
-  # Keeps master's build cache current: when master has a commit that is not cached yet, build it and save the
-  # NuGet packages and obj folders, which the build job (through .github/actions/build-cache) starts from.
-  master-cache:
+  # Cheap check on a Linux runner: is master's current commit already in the build cache?
+  master-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      cached: ${{ steps.check.outputs.cached }}
+    steps:
+    - id: check
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        sha=$(gh api "repos/$GH_REPO/commits/master" --jq .sha)
+        n=$(gh cache list --ref "$GITHUB_REF" --key "build-master-$sha" --json key --jq length)
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "cached=$([ "$n" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        echo "master $sha cached: $n"
+
+  # Only when master moved: build it (both architectures, same commands as the build job) and save its obj folders,
+  # which builds of refs without a cache of their own start from.
+  master-build:
+    needs: master-check
+    if: needs.master-check.outputs.cached != 'true'
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: master
+        ref: ${{ needs.master-check.outputs.sha }}
 
-    - id: sha
-      shell: bash
-      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-    # only checks whether this master commit is cached, nothing is downloaded
-    - id: cache
+    - id: nuget
       uses: actions/cache/restore@v4
       with:
-        key: master-build-${{ steps.sha.outputs.sha }}
-        lookup-only: true
-        path: .build-cache-sha
+        key: nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: nuget-
+        path: ~/.nuget/packages
 
-    - if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/setup-dotnet@v4
+    - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0'
 
-    - if: steps.cache.outputs.cache-hit != 'true'
-      uses: microsoft/setup-msbuild@v2
+    - uses: microsoft/setup-msbuild@v2
 
-    - if: steps.cache.outputs.cache-hit != 'true'
-      run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
+    - run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
 
-    # same command (configuration, runtime, platform) as the Build x64 step, so the obj folders match
-    - if: steps.cache.outputs.cache-hit != 'true'
-      run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ runner.temp }}\master-publish\ /property:BuildVersion=0.0.1
+    - run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-x64 -p:Platform=x64 -o ${{ runner.temp }}\publish\ /property:BuildVersion=0.0.1
 
-    - if: steps.cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: echo "${{ steps.sha.outputs.sha }}" > .build-cache-sha
+    - name: Download arm64 FFmpeg
+      shell: pwsh
+      run: |
+        Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
+        Expand-Archive ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64
+        New-Item -ItemType Directory -Force FluentFin\FFMpeg-arm64 | Out-Null
+        foreach ($x64 in Get-ChildItem FluentFin\FFMpeg\*.dll) {
+          $match = Get-ChildItem ffmpeg-arm64 -Recurse -Filter $x64.Name | Select-Object -First 1
+          if (-not $match) { throw "arm64 FFmpeg is missing $($x64.Name)" }
+          Copy-Item $match.FullName FluentFin\FFMpeg-arm64\
+        }
 
-    - if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+    - run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-arm64 -p:Platform=arm64 -o ${{ runner.temp }}\publish-arm64\ /property:BuildVersion=0.0.1
+
+    - shell: bash
+      run: echo "${{ needs.master-check.outputs.sha }}" > .build-cache-sha
+
+    - uses: actions/cache/save@v4
       with:
-        key: master-build-${{ steps.sha.outputs.sha }}
+        key: build-master-${{ needs.master-check.outputs.sha }}
         path: |
-          ~/.nuget/packages
           **/obj
           .build-cache-sha
 
+    - if: steps.nuget.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        key: nuget-${{ hashFiles('**/*.csproj') }}
+        path: ~/.nuget/packages
+
   build:
-    needs: master-cache
+    needs: [master-check, master-build]
+    # runs when master-build was skipped (master already cached), not when it failed
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v4
       with:
         ref: ${{ inputs.ref }}
 
-    # Start from the newest cache of this ref, else master's (made by the master-cache job). The cache is saved when the
-    # job succeeds, so the next build of the same ref starts from this one.
-    - id: cache
-      uses: actions/cache@v4
+    # NuGet packages are cached on their own, keyed on the project files, and saved only when those change
+    - id: nuget
+      uses: actions/cache/restore@v4
       with:
-        key: master-build-branch-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: nuget-
+        path: ~/.nuget/packages
+
+    # obj folders of the newest earlier build of this ref, else of master's latest build
+    - id: obj
+      uses: actions/cache/restore@v4
+      with:
+        key: build-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          master-build-branch-${{ inputs.ref }}-
-          master-build-
+          build-ref-${{ inputs.ref }}-
+          build-master-
         path: |
-          ~/.nuget/packages
           **/obj
           .build-cache-sha
 
     # msbuild compares file timestamps and a fresh checkout stamps every file "now", which would rebuild everything.
-    # Files unchanged since the cached build get an old timestamp again.
-    - if: steps.cache.outputs.cache-matched-key != ''
+    # Files unchanged since the cached build get an old timestamp again, so only projects with changes are recompiled.
+    - id: stamps
+      if: steps.obj.outputs.cache-matched-key != ''
       shell: bash
       run: |
         base=$(cat .build-cache-sha 2>/dev/null || true)
         [ -n "$base" ] || exit 0
+        echo "base=$base" >> "$GITHUB_OUTPUT"
         git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$base" || { echo "cached commit unavailable, building from scratch"; exit 0; }
         git -c core.quotepath=false diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt" || exit 0
         git -c core.quotepath=false ls-files | grep -vxFf "$RUNNER_TEMP/changed.txt" | xargs -d '\n' touch -d '2000-01-01' || true
-        echo "Restored ${{ steps.cache.outputs.cache-matched-key }}; $(wc -l < "$RUNNER_TEMP/changed.txt") files differ from cached build $base"
+        echo "Restored ${{ steps.obj.outputs.cache-matched-key }}; $(wc -l < "$RUNNER_TEMP/changed.txt") files differ from cached build $base"
 
-    - shell: bash
-      run: git rev-parse HEAD > .build-cache-sha
+    - id: head
+      shell: bash
+      run: |
+        git rev-parse HEAD > .build-cache-sha
+        echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
     - uses: actions/setup-dotnet@v4
       with:
@@ -153,15 +196,33 @@ jobs:
         path: Installer\script.iss
         options: /O+ /DArch=arm64
 
-    # actions/upload-artifact only zips (deflate, level 9 at best). 7z (LZMA2, solid) makes the publish folders much
-    # smaller (the installers are already LZMA compressed by Inno Setup, so they stay as they are); the artifact zip then only stores the .7z (compression-level 0), so nothing is compressed twice.
+    # The previous archives are updated instead of rebuilt: 7z only recompresses the solid blocks (64 MB each) holding
+    # files whose size or time changed, and drops files that are gone. Runtime libraries keep their timestamps (they come
+    # from the cached NuGet packages), so mostly the app's own files are recompressed.
+    - name: Restore previous archives
+      uses: actions/cache/restore@v4
+      with:
+        key: archives-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          archives-ref-${{ inputs.ref }}-
+          archives-
+        path: compressed
+
+    # actions/upload-artifact only zips (deflate); 7z (LZMA2, solid) makes the publish folders much smaller. The installers
+    # are already LZMA compressed by Inno Setup, so they stay as they are. The artifact zip only stores the .7z (compression-level 0).
     - name: Compress with 7z
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force compressed | Out-Null
-        7z a -t7z -mx=9 -md=128m -mfb=273 -ms=on compressed\FluentFin-win-x64-publish.7z ".\${{ env.PUBLISH_FOLDER }}\*"
+        # -up0q0r2x2y2z1w2: synchronize the archive with the folder (add new, replace changed, delete missing)
+        $opts = '-t7z', '-mx=9', '-md=64m', '-ms=64m', '-mqs', '-up0q0r2x2y2z1w2'
+        7z u @opts compressed\FluentFin-win-x64-publish.7z ".\${{ env.PUBLISH_FOLDER }}\*"
+        if ($LASTEXITCODE) { throw "7z failed" }
         if ('${{ steps.arm.outputs.supported }}' -eq 'true') {
-          7z a -t7z -mx=9 -md=128m -mfb=273 -ms=on compressed\FluentFin-win-arm64-publish.7z ".\${{ env.PUBLISH_FOLDER_ARM64 }}\*"
+          7z u @opts compressed\FluentFin-win-arm64-publish.7z ".\${{ env.PUBLISH_FOLDER_ARM64 }}\*"
+          if ($LASTEXITCODE) { throw "7z failed" }
+        } else {
+          Remove-Item -ErrorAction Ignore compressed\FluentFin-win-arm64-publish.7z
         }
         Get-ChildItem compressed | Format-Table Name, Length
 
@@ -205,3 +266,24 @@ jobs:
             echo "- arm64 skipped: this ref has no arm64 support"
           fi
         } >> "$GITHUB_STEP_SUMMARY"
+
+    # skipped when this exact commit was already the cached one: nothing new to store
+    - if: steps.stamps.outputs.base != steps.head.outputs.sha
+      uses: actions/cache/save@v4
+      with:
+        key: build-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          **/obj
+          .build-cache-sha
+
+    - if: steps.stamps.outputs.base != steps.head.outputs.sha
+      uses: actions/cache/save@v4
+      with:
+        key: archives-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: compressed
+
+    - if: steps.nuget.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        key: nuget-${{ hashFiles('**/*.csproj') }}
+        path: ~/.nuget/packages
