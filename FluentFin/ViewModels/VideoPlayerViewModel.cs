@@ -366,6 +366,10 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			OpenSubtitles(MediaPlayer, mediaResponse, subtitleStream);
 		}
+		else
+		{
+			logger.LogInformation("No subtitle opened at start: wanted stream index {Index} (selection={Selection})", subtitleIndex, selection?.SubtitleStreamIndex);
+		}
 
 		await playbackSessions.ReportStartAsync(session, GetPlaybackState(MediaPlayer));
 	}
@@ -396,6 +400,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			logger.LogInformation(
 				"Source stream #{Index} {Type}: codec={Codec}, language={Language}, title={Title}, {Width}x{Height}, channels={Channels}, bitrate={Bitrate}, default={Default}, external={External}",
 				stream.Index, stream.Type, stream.Codec, stream.Language, stream.DisplayTitle, stream.Width, stream.Height, stream.Channels, stream.BitRate, stream.IsDefault, stream.IsExternal);
+
+			if (stream.Type == MediaStream_Type.Subtitle)
+			{
+				logger.LogInformation("Subtitle delivery of {Stream}", stream.Describe());
+			}
 		}
 	}
 
@@ -413,6 +422,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			if (stream.IsExternal == true)
 			{
 				var url = HttpUtility.UrlDecode(JellyfinClient.BaseUrl.AppendPathSegment(stream.DeliveryUrl).ToString());
+				logger.LogInformation("Opening subtitle {Stream} as external file with {Player}, playMethod={PlayMethod}, url={Url}",
+					stream.Describe(), mp.GetType().Name, response?.PlayMethod, url.MaskApiKey());
 				mp.OpenExternalSubtitleTrack(url);
 			}
 			else
@@ -420,13 +431,19 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 				var subtitleIndex = subtitles.Where(x => x.IsExternal is false).IndexOf(stream);
 				if (stream.Index is not { } trackIndex)
 				{
+					logger.LogWarning("Not opening subtitle {Stream}: it has no stream index", stream.Describe());
 					return;
 				}
 
+				logger.LogInformation("Opening subtitle {Stream} as internal track with {Player}, playMethod={PlayMethod}, trackIndex={TrackIndex}, ordinalAmongEmbedded={Ordinal}",
+					stream.Describe(), mp.GetType().Name, response?.PlayMethod, trackIndex, subtitleIndex);
 				mp.OpenInternalSubtitleTrack(trackIndex, subtitleIndex);
 			}
 		}
-		catch { }
+		catch (Exception ex)
+		{
+			logger.LogWarning(ex, "Unable to open subtitle {Stream} with {Player}", stream.Describe(), mp.GetType().Name);
+		}
 	}
 
 
