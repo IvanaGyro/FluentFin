@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DynamicData;
 using FluentFin.Contracts.Services;
 using FluentFin.Contracts.ViewModels;
+using FluentFin.Core;
 using FluentFin.Core.Contracts.Services;
 using FluentFin.Core.Services;
 using FluentFin.Core.Settings;
@@ -27,11 +28,13 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 							ILogger<VideoPlayerViewModel> logger,
 							IObservable<IOutboundWebSocketMessage> webSocketMessages,
 							INavigationService navigationService,
+							IPlaybackSessionManager playbackSessions,
 							ISettings settings,
 							ITaskBarProgress taskBarProgress) : ObservableObject, INavigationAware
 {
 	private readonly CompositeDisposable _disposables = [];
-	private readonly PlaybackProgressInfo _playbackProgressInfo = new();
+	private PlaybackSession? _session;
+	private int _loadVersion;
 	private KeyboardMediaPlayerController? _keyboardController;
 	private PlayQueueUpdate? _playQueueUpdate;
 	private TimeSpan _duration;
@@ -65,21 +68,44 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 	public async Task OnNavigatedFrom()
 	{
+		// invalidates any media that is still being loaded
+		Interlocked.Increment(ref _loadVersion);
+		Playlist.PropertyChanged -= OnPlaylistPropertyChanged;
+
 		_disposables.Dispose();
 		_keyboardController?.UnsubscribeEvents();
 
 		NativeMethods.AllowSleep();
 
 		taskBarProgress.Clear();
-		await UpdateStatus();
-		await JellyfinClient.Stop();
+		await StopPlayback();
+	}
 
-		if (MediaPlayer is null)
+	/// <summary>
+	/// Releases the player's media source and reports the current playback session as stopped, which makes the server
+	/// end its transcoding job. Safe to call repeatedly, only the first call for a session has an effect.
+	/// </summary>
+	private async Task StopPlayback(bool stopPlayer = true)
+	{
+		var session = Interlocked.Exchange(ref _session, null);
+		long? position = null;
+
+		try
 		{
-			return;
+			// the position is lost once the player is stopped
+			position = GetKnownPosition();
+
+			if (stopPlayer)
+			{
+				MediaPlayer?.Stop();
+			}
+		}
+		catch (Exception ex)
+		{
+			logger.LogError(ex, "Failed to stop the media player");
 		}
 
-		MediaPlayer.Stop();
+		await playbackSessions.StopAsync(session, position);
 	}
 
 	public async Task OnNavigatedTo(object parameter)
@@ -219,24 +245,25 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		MediaPlayer.Stop();
+		var version = Interlocked.Increment(ref _loadVersion);
+
+		// clean up the previous session first, whether or not the new media can be loaded
+		await StopPlayback();
 
 		var full = await JellyfinClient.GetItem(selectedItem.Dto.Id.Value);
 
-		if (full is null)
+		if (full is null || version != _loadVersion)
 		{
 			return;
 		}
 
 		var mediaResponse = await GetMediaUrl(full, selectedItem.Selection);
 
-		if (mediaResponse is null)
+		if (mediaResponse is null || version != _loadVersion)
 		{
 			return;
 		}
 
-
-		await JellyfinClient.Stop();
 		TrickplayViewModel.SetItem(full);
 
 		var selection = selectedItem.Selection;
@@ -251,10 +278,17 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
 
+		// registered before playback starts so that leaving the page at any moment can clean it up
+		var session = playbackSessions.Begin(selectedItem.Dto.Id.Value, mediaResponse);
+		session.PositionProvider = GetKnownPosition;
+		_session = session;
+
 		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal is >= 0 ? audioOrdinal : null);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL}", RedactApiKey(mediaResponse.Uri));
+			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
+			await StopPlayback();
+			return;
 		}
 
 		PlayMethod = mediaResponse.PlayMethod;
@@ -269,10 +303,10 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			OpenSubtitles(MediaPlayer, mediaResponse, subtitleStream);
 		}
 
-		await JellyfinClient.Playing(selectedItem.Dto);
+		await playbackSessions.ReportStartAsync(session, GetPlaybackState(MediaPlayer));
 	}
 
-	private static string RedactApiKey(Uri uri) => uri.SetQueryParam("ApiKey", "***").ToString();
+	private static string RedactApiKey(Uri uri) => uri.MaskApiKey();
 
 	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
 	{
@@ -344,9 +378,44 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		return await JellyfinClient.GetMediaUrl(dto, selection);
 	}
 
+	// some backends keep reporting the position of the previous media until the new one is playing,
+	// so the position only belongs to the current session once the player is actually playing it
+	// a backend can also report Ended when it failed to open the media, there the position is zero and not a real position
+	private long? GetKnownPosition() => MediaPlayer switch
+	{
+		{ State: MediaPlayerState.Playing or MediaPlayerState.Paused } mp => mp.Position.Ticks,
+		{ State: MediaPlayerState.Ended, Position.Ticks: > 0 } mp => mp.Position.Ticks,
+		_ => null,
+	};
+
+	private string DescribePlayback()
+	{
+		var item = Playlist.SelectedItem;
+		var media = item?.Media;
+
+		// the players repeat the url in their error messages
+		return ($"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
+			$"PlaySessionId: {_session?.PlaySessionId ?? media?.PlaybackSessionId}, " +
+			$"MediaSourceId: {media?.MediaSourceId}, " +
+			$"PlayMethod: {media?.PlayMethod}, " +
+			$"Container: {media?.MediaSourceInfo.Container}, " +
+			$"Player: {MediaPlayerType}, " +
+			$"PlayerState: {MediaPlayer?.State}, " +
+			$"PlayerError: {MediaPlayer?.LastError}, " +
+			$"Position: {MediaPlayer?.Position}, " +
+			$"Url: {media?.Uri}").MaskApiKey();
+	}
+
+	private PlaybackState GetPlaybackState(IMediaPlayerController mp) => new(
+		mp.Position.Ticks,
+		!mp.IsPlaying,
+		mp.IsMuted,
+		mp.AudioTrackIndex,
+		mp.SubtitleTrackIndex);
+
 	private async Task UpdateStatus()
 	{
-		if (MediaPlayer is null)
+		if (MediaPlayer is null || _session is not { } session)
 		{
 			return;
 		}
@@ -356,48 +425,42 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		if (Playlist.SelectedItem?.Media is not { } media)
-		{
-			return;
-		}
-
 		if (MediaPlayer.State is MediaPlayerState.Error or MediaPlayerState.Ended or MediaPlayerState.Opening)
 		{
 			return;
 		}
 
-		_playbackProgressInfo.ItemId = Playlist.SelectedItem.Dto.Id;
-		_playbackProgressInfo.PositionTicks = MediaPlayer.Position.Ticks;
-		_playbackProgressInfo.IsPaused = !MediaPlayer.IsPlaying;
-		_playbackProgressInfo.MediaSourceId = Playlist.SelectedItem.Dto.Id?.ToString("N");
-		_playbackProgressInfo.IsMuted = MediaPlayer.IsMuted;
-		_playbackProgressInfo.PlayMethod = PlayMethod;
-		_playbackProgressInfo.AudioStreamIndex = MediaPlayer.AudioTrackIndex;
-		_playbackProgressInfo.SubtitleStreamIndex = MediaPlayer.SubtitleTrackIndex;
-		logger.LogDebug("Player status: item={Id}, method={PlayMethod}, position={Position}, state={State}, audioTrack={AudioTrack}, subtitleTrack={SubtitleTrack}",
-			_playbackProgressInfo.ItemId, PlayMethod, MediaPlayer.Position, MediaPlayer.State, MediaPlayer.AudioTrackIndex, MediaPlayer.SubtitleTrackIndex);
-		_playbackProgressInfo.PlaybackStartTimeTicks = TimeProvider.System.GetTimestamp();
-		_playbackProgressInfo.SessionId = media.PlaybackSessionId;
-		_playbackProgressInfo.MediaSourceId = media.MediaSourceId;
-
 		taskBarProgress.SetProgressPercent((int)((MediaPlayer.Position.TotalSeconds / _duration.TotalSeconds) * 100));
 
-		await JellyfinClient.Progress(_playbackProgressInfo);
+		logger.LogDebug("Player status: {Playback}", DescribePlayback());
+
+		await playbackSessions.ReportProgressAsync(session, GetPlaybackState(MediaPlayer));
 	}
 
 	private void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
-		mp.Ended.Where(_ => Playlist.CanSelectNext).Subscribe(_ =>
+		// the backends raise these on their own native threads, stopping a player from there can deadlock
+		mp.Ended.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(async _ =>
 		{
-			taskBarProgress.Clear();
-			Playlist.SelectNext();
+			if (Playlist.CanSelectNext)
+			{
+				// the previous session is stopped when the next item is selected
+				taskBarProgress.Clear();
+				Playlist.SelectNext();
+			}
+			else
+			{
+				await StopPlayback(stopPlayer: false);
+			}
 		});
-		mp.Stopped.Subscribe(async _ => await JellyfinClient.Stop());
-		mp.Errored.Subscribe(async _ =>
+		// events of a previous media can arrive late, only act on them if the player is still in that state
+		mp.Stopped.ObserveOn(RxSchedulers.MainThreadScheduler).Where(_ => mp.State is MediaPlayerState.Stopped).Subscribe(async _ => await StopPlayback(stopPlayer: false));
+		mp.Errored.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(async _ =>
 		{
-			logger.LogError("An error occurred while playing media");
-			await JellyfinClient.Stop();
+			// described before the session is stopped, the backends do not report what went wrong
+			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
+			await StopPlayback();
 		});
 		mp.PositionChanged
 			.Where(_ => MediaPlayer?.State == MediaPlayerState.Playing)
@@ -438,8 +501,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 						await UpdateStatus();
 						break;
 					case PlaystateMessage { Data.Command: PlaystateRequest_Command.Stop }:
-						MediaPlayer.Stop();
-						await JellyfinClient.Stop();
+						await StopPlayback();
 						navigationService.NavigateTo<HomeViewModel>(new());
 						break;
 					case SyncPlayCommandMessage { Data: not null } syncPlay:
@@ -461,7 +523,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 								await SchedulePause(syncPlay.Data, MediaPlayer);
 								break;
 							case SendCommand_Command.Stop:
-								MediaPlayer.Stop();
+								await StopPlayback();
 								break;
 						}
 
@@ -496,6 +558,13 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	private async Task SchedulePlay(SendCommand command, IMediaPlayerController mp)
 	{
 		if (command is not { When: { } commandTime, PositionTicks: { } positionTicks })
+		{
+			return;
+		}
+
+		// the play session was reported stopped, playing would restart its stream without being tracked,
+		// after a stop the group restarts playback with a new play queue, which opens a new session
+		if (_session is null)
 		{
 			return;
 		}
