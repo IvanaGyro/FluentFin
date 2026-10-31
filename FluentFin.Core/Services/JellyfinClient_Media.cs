@@ -45,6 +45,12 @@ public partial class JellyfinClient
 			playbackInfoDto.MaxStreamingBitrate = bitRate;
 		}
 
+		if (selection is not null)
+		{
+			// the server only applies the requested stream indices to the media source named here
+			playbackInfoDto.MediaSourceId = id.ToString("N");
+		}
+
 		if (selection?.AudioStreamIndex is { } audioIndex)
 		{
 			playbackInfoDto.AudioStreamIndex = audioIndex;
