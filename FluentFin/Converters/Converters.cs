@@ -111,15 +111,28 @@ public static class Converters
 
 	public static FlyoutBase? GetAudiosFlyout(IMediaPlayerController player, int defaultIndex)
 	{
-		var audios = player.GetAudioTracks().ToList();
+		var serverAudio = player.ServerAudio;
+		var audios = serverAudio?.Tracks.ToList() ?? player.GetAudioTracks().ToList();
 
 		if (audios.Count < 2)
 		{
 			return null;
 		}
 
+		defaultIndex = serverAudio?.SelectedId ?? defaultIndex;
+
 		const string groupName = "Audios";
-		var command = new RelayCommand<AudioTrack>(track => player.OpenAudioTrack(track.Id));
+		var command = new RelayCommand<AudioTrack>(track =>
+		{
+			if (player.ServerAudio is { } server)
+			{
+				server.Select(track.Id);
+			}
+			else
+			{
+				player.OpenAudioTrack(track.Id);
+			}
+		});
 
 		var flyout = new MenuBarItemFlyout();
 

@@ -28,6 +28,12 @@ public interface IMediaPlayerController : IDisposable
 	/// </summary>
 	string? LastError { get; }
 
+	/// <summary>
+	/// Audio streams of the source file to offer in the audio menu in place of the player's own tracks.
+	/// A transcode only contains the one stream the server picked, so the other choices have to come from the server.
+	/// </summary>
+	ServerAudioSelection? ServerAudio { get; set; }
+
 	IObservable<TimeSpan> DurationChanged { get; }
 	IObservable<TimeSpan> PositionChanged { get; }
 	IObservable<Unit> Playing { get; }
@@ -58,6 +64,8 @@ public enum MediaPlayerType
 }
 
 public record struct AudioTrack(int Id, string? Language, string? Name);
+
+public record ServerAudioSelection(IReadOnlyList<AudioTrack> Tracks, int SelectedId, Action<int> Select);
 
 public static class MediaPlayerControllerExtensions
 {

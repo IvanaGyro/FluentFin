@@ -38,6 +38,8 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public string? LastError { get; private set; }
 
+	public ServerAudioSelection? ServerAudio { get; set; }
+
 	public MediaPlayerState State => ConvertState(_mp.Status);
 
 	public TimeSpan Position => new(_mp.CurTime);

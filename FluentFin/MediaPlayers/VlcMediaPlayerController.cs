@@ -30,6 +30,8 @@ namespace FluentFin.MediaPlayers
 		private readonly Queue<string> _recentLog = new();
 
 		// the error event has no details, LibVLC reports the reason (e.g. http errors) through its log
+		public ServerAudioSelection? ServerAudio { get; set; }
+
 		public string? LastError
 		{
 			get

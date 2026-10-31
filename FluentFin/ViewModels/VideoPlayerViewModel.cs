@@ -245,12 +245,69 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		await StartPlayback(selectedItem);
+	}
+
+	/// <summary>
+	/// Re-requests the current item with another audio stream and resumes where it was. Needed because a transcode only holds the stream the
+	/// server picked, and because the new stream may make the file playable without transcoding.
+	/// </summary>
+	private async Task ChangeAudio(int streamIndex)
+	{
+		if (MediaPlayer is null || Playlist.SelectedItem is not { Dto.Id: not null } item)
+		{
+			return;
+		}
+
+		var position = MediaPlayer.Position;
+		var subtitleIndex = item.Selection?.SubtitleStreamIndex ?? item.Media?.MediaSourceInfo.DefaultSubtitleStreamIndex;
+		item.Selection = new PlaybackSelection(streamIndex, subtitleIndex);
+
+		await StartPlayback(item, position);
+	}
+
+	private ServerAudioSelection? CreateServerAudioSelection(MediaResponse response, int? audioIndex)
+	{
+		if (response.PlayMethod != PlaybackProgressInfo_PlayMethod.Transcode)
+		{
+			return null;
+		}
+
+		var streams = response.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Audio && x.Index is not null).ToList() ?? [];
+		if (streams.Count < 2)
+		{
+			return null;
+		}
+
+		var tracks = streams.Select(x => new AudioTrack(x.Index!.Value, x.Language, x.DisplayTitle)).ToList();
+		var selectedId = audioIndex ?? streams.FirstOrDefault(x => x.IsDefault == true)?.Index ?? tracks[0].Id;
+
+		return new ServerAudioSelection(tracks, selectedId, async id =>
+		{
+			try
+			{
+				await ChangeAudio(id);
+			}
+			catch (Exception ex)
+			{
+				logger.LogError(ex, "Unable to switch to audio stream {Index}", id);
+			}
+		});
+	}
+
+	private async Task StartPlayback(PlaylistItem selectedItem, TimeSpan? resumeAt = null)
+	{
+		if (MediaPlayer is null || selectedItem.Dto.Id is not { } itemId)
+		{
+			return;
+		}
+
 		var version = Interlocked.Increment(ref _loadVersion);
 
 		// clean up the previous session first, whether or not the new media can be loaded
 		await StopPlayback();
 
-		var full = await JellyfinClient.GetItem(selectedItem.Dto.Id.Value);
+		var full = await JellyfinClient.GetItem(itemId);
 
 		if (full is null || version != _loadVersion)
 		{
@@ -279,9 +336,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
 
 		// registered before playback starts so that leaving the page at any moment can clean it up
-		var session = playbackSessions.Begin(selectedItem.Dto.Id.Value, mediaResponse);
+		var session = playbackSessions.Begin(itemId, mediaResponse);
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
+
+		// set before opening so that the audio menu built when the player reports its tracks already uses it
+		MediaPlayer.ServerAudio = CreateServerAudioSelection(mediaResponse, audioIndex);
 
 		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal is >= 0 ? audioOrdinal : null);
 		if (!success)
@@ -293,7 +353,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		PlayMethod = mediaResponse.PlayMethod;
 
-		if (selectedItem.Dto.UserData?.PlaybackPositionTicks is { } ticks)
+		if (resumeAt is { } resume)
+		{
+			MediaPlayer.SeekTo(resume);
+		}
+		else if (selectedItem.Dto.UserData?.PlaybackPositionTicks is { } ticks)
 		{
 			MediaPlayer.SeekTo(TimeSpan.FromTicks(ticks));
 		}

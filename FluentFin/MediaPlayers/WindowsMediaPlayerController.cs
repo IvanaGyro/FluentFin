@@ -40,6 +40,8 @@ namespace FluentFin.MediaPlayers
 
 		public string? LastError { get; private set; }
 
+		public ServerAudioSelection? ServerAudio { get; set; }
+
 		public MediaPlayerState State => ConvertState(_mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed));
 		public TimeSpan Position => _mp.SafeGetValue(mp => mp.Position, TimeSpan.Zero);
 		public bool IsPlaying => _mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed) is Windows.Media.Playback.MediaPlayerState.Playing;
