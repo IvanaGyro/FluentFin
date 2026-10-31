@@ -27,7 +27,12 @@ namespace FluentFin.MediaPlayers
 		}
 
 		public void OpenExternalSubtitleTrack(string url) => _mp.AddSlave(MediaSlaveType.Subtitle, url, true);
-		public void OpenInternalSubtitleTrack(int trackIndex, int subtitleIndex) => _mp.SetSpu(trackIndex);
+		public void OpenInternalSubtitleTrack(int trackIndex, int subtitleIndex)
+		{
+			// VLC numbers its tracks on its own, the stream index of the server only happens to be the same id for some files
+			var id = SubtitleTrackMapping.IdOfNthSubtitle(_mp.SpuDescription.Select(x => x.Id), subtitleIndex) ?? trackIndex;
+			_mp.SetSpu(id);
+		}
 		public void DisableSubtitles() => _mp.SetSpu(-1);
 		public void OpenAudioTrack(int index) => _mp.SetAudioTrack(index);
 		public void Pause() => _mp.Pause();
