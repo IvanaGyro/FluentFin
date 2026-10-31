@@ -149,16 +149,15 @@ namespace FluentFin.MediaPlayers
 				return;
 			}
 
-			// chapters and other metadata can come before the subtitles, so the position of the n-th subtitle is not n
 			var timedMetadataTracks = _mediaItem.TimedMetadataTracks;
-			if (SubtitleTrackMapping.PositionOfNthSubtitle(timedMetadataTracks, IsSubtitleTrack, subtitleIndex) is { } position)
+			if (subtitleIndex >= 0 && subtitleIndex < timedMetadataTracks.Count)
 			{
 				foreach (var track in timedMetadataTracks.Index())
 				{
 					_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)track.Index, Windows.Media.Playback.TimedMetadataTrackPresentationMode.Disabled);
 				}
 
-				_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)position, Windows.Media.Playback.TimedMetadataTrackPresentationMode.PlatformPresented);
+				_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)subtitleIndex, Windows.Media.Playback.TimedMetadataTrackPresentationMode.PlatformPresented);
 			}
 		}
 
