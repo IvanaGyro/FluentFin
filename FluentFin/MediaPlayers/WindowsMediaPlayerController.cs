@@ -44,7 +44,9 @@ namespace FluentFin.MediaPlayers
 		public int? SubtitleTrackIndex => null;
 		public int? AudioTrackIndex => null;
 
-		public int SubtitleTrackCount => _mediaItem?.TimedMetadataTracks.Count(x => x.TimedMetadataKind is TimedMetadataKind.Subtitle or TimedMetadataKind.ImageSubtitle) ?? 0;
+		// text subtitles, image subtitles (PGS, VobSub) and closed captions; the other kinds are chapters and other metadata
+		public int SubtitleTrackCount => _mediaItem?.TimedMetadataTracks.Count(x =>
+			x.TimedMetadataKind is TimedMetadataKind.Subtitle or TimedMetadataKind.ImageSubtitle or TimedMetadataKind.Caption) ?? 0;
 		public double Volume
 		{
 			get
