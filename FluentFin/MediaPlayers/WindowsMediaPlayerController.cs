@@ -69,8 +69,10 @@ namespace FluentFin.MediaPlayers
 		public int? AudioTrackIndex => null;
 
 		// text subtitles, image subtitles (PGS, VobSub) and closed captions; the other kinds are chapters and other metadata
-		public int SubtitleTrackCount => _mediaItem?.TimedMetadataTracks.Count(x =>
-			x.TimedMetadataKind is TimedMetadataKind.Subtitle or TimedMetadataKind.ImageSubtitle or TimedMetadataKind.Caption) ?? 0;
+		private static bool IsSubtitleTrack(TimedMetadataTrack track) =>
+			track.TimedMetadataKind is TimedMetadataKind.Subtitle or TimedMetadataKind.ImageSubtitle or TimedMetadataKind.Caption;
+
+		public int SubtitleTrackCount => _mediaItem?.TimedMetadataTracks.Count(IsSubtitleTrack) ?? 0;
 		public double Volume
 		{
 			get
@@ -147,15 +149,16 @@ namespace FluentFin.MediaPlayers
 				return;
 			}
 
+			// chapters and other metadata can come before the subtitles, so the position of the n-th subtitle is not n
 			var timedMetadataTracks = _mediaItem.TimedMetadataTracks;
-			if (subtitleIndex >= 0 && subtitleIndex < timedMetadataTracks.Count)
+			if (SubtitleTrackMapping.PositionOfNthSubtitle(timedMetadataTracks, IsSubtitleTrack, subtitleIndex) is { } position)
 			{
 				foreach (var track in timedMetadataTracks.Index())
 				{
 					_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)track.Index, Windows.Media.Playback.TimedMetadataTrackPresentationMode.Disabled);
 				}
 
-				_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)subtitleIndex, Windows.Media.Playback.TimedMetadataTrackPresentationMode.PlatformPresented);
+				_mediaItem.TimedMetadataTracks.SetPresentationMode((uint)position, Windows.Media.Playback.TimedMetadataTrackPresentationMode.PlatformPresented);
 			}
 		}
 
