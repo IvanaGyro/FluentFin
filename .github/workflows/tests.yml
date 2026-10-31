@@ -23,3 +23,13 @@ jobs:
     # so the WinUI app itself is not built here. The tests run on Windows, the platform of the app.
     -   name: 'Test'
         run: dotnet test FluentFin.Core.Tests/FluentFin.Core.Tests.csproj
+
+    # The tests of the logic of the app project need the WinUI app, they build it the way the test build does.
+    -   name: 'Setup msbuild'
+        uses: microsoft/setup-msbuild@v2
+
+    -   name: 'Add Windows Community Toolkit labs nuget source'
+        run: dotnet nuget add source https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json -n CommunityToolkitLabs
+
+    -   name: 'Test the app'
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64
