@@ -8,6 +8,10 @@ on:
       ref:
         description: 'Branch, tag or SHA to build'
         required: true
+      installers:
+        description: 'Also build the Inno Setup installers'
+        type: boolean
+        default: false
       nuget-cache:
         description: 'Restore NuGet packages from the cache (untick to download them, e.g. to compare speeds)'
         type: boolean
@@ -203,13 +207,14 @@ jobs:
       run: dotnet publish ${{ env.MAIN_PROJECT_PATH }} --self-contained -c Release -r win-arm64 -p:Platform=arm64 -o ${{ env.PUBLISH_FOLDER_ARM64 }}\ /property:BuildVersion=0.0.1
 
     - name: Installer x64
+      if: inputs.installers
       uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
       with:
         path: Installer\script.iss
         options: /O+
 
     - name: Installer arm64
-      if: steps.arm.outputs.supported == 'true'
+      if: inputs.installers && steps.arm.outputs.supported == 'true'
       uses: Minionguyjpro/Inno-Setup-Action@v1.2.5
       with:
         path: Installer\script.iss
@@ -246,6 +251,7 @@ jobs:
         Get-ChildItem compressed | Format-Table Name, Length
 
     - name: Upload installers
+      if: inputs.installers
       id: up1
       uses: actions/upload-artifact@v4
       with:
@@ -277,7 +283,9 @@ jobs:
       run: |
         {
           echo "### Artifacts for \`${{ inputs.ref }}\`"
-          echo "- [installers](${{ steps.up1.outputs.artifact-url }})"
+          if [ "${{ inputs.installers }}" = true ]; then
+            echo "- [installers](${{ steps.up1.outputs.artifact-url }})"
+          fi
           echo "- [x64 publish](${{ steps.up2.outputs.artifact-url }})"
           if [ "${{ steps.arm.outputs.supported }}" = true ]; then
             echo "- [arm64 publish](${{ steps.up3.outputs.artifact-url }})"
