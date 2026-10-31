@@ -1,4 +1,5 @@
 using System.Reactive.Linq;
+using FluentFin.Contracts.Services;
 using FluentFin.Core.Contracts.Services;
 using FluentFin.Core.Settings;
 using FluentFin.Services;
