@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DynamicData;
 using FluentFin.Contracts.Services;
 using FluentFin.Contracts.ViewModels;
+using FluentFin.Core;
 using FluentFin.Core.Contracts.Services;
 using FluentFin.Core.Services;
 using FluentFin.Core.Settings;
@@ -236,7 +237,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var success = MediaPlayer.Play(mediaResponse.Uri, mediaResponse.MediaSourceInfo.DefaultAudioStreamIndex ?? 0);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL}", mediaResponse.Uri);
+			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
 		}
 
 		PlayMethod = mediaResponse.PlayMethod;
@@ -336,6 +337,24 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		await JellyfinClient.Progress(_playbackProgressInfo);
 	}
 
+	private string DescribePlayback()
+	{
+		var item = Playlist.SelectedItem;
+		var media = item?.Media;
+
+		// the players repeat the url in their error messages
+		return ($"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
+			$"PlaySessionId: {media?.PlaybackSessionId}, " +
+			$"MediaSourceId: {media?.MediaSourceId}, " +
+			$"PlayMethod: {media?.PlayMethod}, " +
+			$"Container: {media?.MediaSourceInfo.Container}, " +
+			$"Player: {MediaPlayerType}, " +
+			$"PlayerState: {MediaPlayer?.State}, " +
+			$"PlayerError: {MediaPlayer?.LastError}, " +
+			$"Position: {MediaPlayer?.Position}, " +
+			$"Url: {media?.Uri}").MaskApiKey();
+	}
+
 	private void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
@@ -347,7 +366,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		mp.Stopped.Subscribe(async _ => await JellyfinClient.Stop());
 		mp.Errored.Subscribe(async _ =>
 		{
-			logger.LogError("An error occurred while playing media");
+			// described before the session is stopped, the backends do not report what went wrong
+			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
 			await JellyfinClient.Stop();
 		});
 		mp.PositionChanged
