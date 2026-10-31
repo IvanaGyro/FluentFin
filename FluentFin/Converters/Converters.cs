@@ -174,7 +174,7 @@ public static class Converters
 
 			var logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.Subtitles");
 
-			if (stream.IsExternal == true)
+			if (stream.UsesDeliveryUrl(response!.PlayMethod))
 			{
 				var url = HttpUtility.UrlDecode(App.GetService<IJellyfinClient>().BaseUrl.AppendPathSegment(stream.DeliveryUrl).ToString());
 				logger.LogInformation("Menu: opening subtitle {Stream} as external file with {Player}, playMethod={PlayMethod}, url={Url}",

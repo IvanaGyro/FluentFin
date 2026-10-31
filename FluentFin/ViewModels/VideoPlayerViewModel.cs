@@ -419,7 +419,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		try
 		{
-			if (stream.IsExternal == true)
+			if (stream.UsesDeliveryUrl(response!.PlayMethod))
 			{
 				var url = HttpUtility.UrlDecode(JellyfinClient.BaseUrl.AppendPathSegment(stream.DeliveryUrl).ToString());
 				logger.LogInformation("Opening subtitle {Stream} as external file with {Player}, playMethod={PlayMethod}, url={Url}",
