@@ -8,6 +8,10 @@ on:
       ref:
         description: 'Branch, tag or SHA to build'
         required: true
+      nuget-cache:
+        description: 'Restore NuGet packages from the cache (untick to download them, e.g. to compare speeds)'
+        type: boolean
+        default: true
 
 env:
   MAIN_PROJECT_PATH: 'FluentFin\FluentFin.csproj'
@@ -110,6 +114,7 @@ jobs:
 
     # NuGet packages are cached on their own, keyed on the project files, and saved only when those change
     - id: nuget
+      if: inputs.nuget-cache
       uses: actions/cache/restore@v4
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
@@ -156,6 +161,18 @@ jobs:
 
     - name: Add Windows Community Toolkit labs nuget source
       run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
+
+    # Its own step so the time spent getting packages (from the cache, else downloaded) shows up separately;
+    # the restores inside the publish steps below then only re-check them.
+    - name: Restore packages
+      shell: pwsh
+      run: |
+        dotnet restore ${{ env.MAIN_PROJECT_PATH }} -r win-x64 -p:Platform=x64
+        if ($LASTEXITCODE) { throw "restore failed" }
+        if (Select-String -Path FluentFin\FluentFin.csproj -Pattern 'win-arm64' -Quiet) {
+          dotnet restore ${{ env.MAIN_PROJECT_PATH }} -r win-arm64 -p:Platform=arm64
+          if ($LASTEXITCODE) { throw "restore failed" }
+        }
 
     # refs created before the ARM64 work (no win-arm64 handling in the csproj) are built for x64 only
     - name: Detect arm64 support
@@ -283,7 +300,7 @@ jobs:
         key: archives-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: compressed
 
-    - if: steps.nuget.outputs.cache-hit != 'true'
+    - if: inputs.nuget-cache && steps.nuget.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         key: nuget-${{ hashFiles('**/*.csproj') }}
