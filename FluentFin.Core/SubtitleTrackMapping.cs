@@ -31,29 +31,6 @@ public static class SubtitleTrackMapping
 		return -1;
 	}
 
-	/// <summary>The position in the track list of the player of the n-th subtitle, tracks of other kinds (chapters, metadata) are skipped.</summary>
-	public static int? PositionOfNthSubtitle<T>(IReadOnlyList<T> tracks, Func<T, bool> isSubtitle, int ordinal)
-	{
-		var seen = 0;
-
-		for (var position = 0; position < tracks.Count; position++)
-		{
-			if (!isSubtitle(tracks[position]))
-			{
-				continue;
-			}
-
-			if (seen == ordinal)
-			{
-				return position;
-			}
-
-			seen++;
-		}
-
-		return null;
-	}
-
 	/// <summary>The id of the n-th subtitle track of a player that lists its tracks with ids, the entry that turns subtitles off (a negative id) is skipped.</summary>
 	public static int? IdOfNthSubtitle(IEnumerable<int> trackIds, int ordinal)
 	{

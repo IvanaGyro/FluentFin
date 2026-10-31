@@ -10,31 +10,6 @@ public sealed class SubtitleTrackMappingTests
 	private readonly BaseItemDto _movie = new() { Id = Guid.NewGuid(), Type = BaseItemDto_Type.Movie, MediaType = BaseItemDto_MediaType.Video };
 
 	[Fact]
-	public async Task WindowsMediaPlayer_FindsTheSubtitleAfterChaptersAndImageSubtitles()
-	{
-		// the file: video 0, audio 1, text subtitles 2 and 3, image subtitle 4
-		var response = await PlayFileWith(
-			Stream(0, MediaStream_Type.Video, "h264"),
-			Stream(1, MediaStream_Type.Audio, "eac3"),
-			Stream(2, MediaStream_Type.Subtitle, "subrip"),
-			Stream(3, MediaStream_Type.Subtitle, "subrip"),
-			Stream(4, MediaStream_Type.Subtitle, "PGSSUB"));
-		var image = SelectedStream(response, 4);
-		var text = SelectedStream(response, 3);
-
-		// what the player lists: a chapter track comes first, the image subtitle is a subtitle of its own kind
-		string[] tracks = ["Chapter", "Subtitle", "Subtitle", "ImageSubtitle"];
-		Func<string, bool> isSubtitle = kind => kind != "Chapter";
-
-		Assert.Equal(3, SubtitleTrackMapping.PositionOfNthSubtitle(tracks, isSubtitle, response.MediaSourceInfo.EmbeddedSubtitleOrdinal(image)));
-
-		// the second subtitle is at position 2, not at position 1 where the second track of the list is
-		var ordinal = response.MediaSourceInfo.EmbeddedSubtitleOrdinal(text);
-		Assert.Equal(1, ordinal);
-		Assert.Equal(2, SubtitleTrackMapping.PositionOfNthSubtitle(tracks, isSubtitle, ordinal));
-	}
-
-	[Fact]
 	public async Task Vlc_UsesItsOwnTrackIdInsteadOfTheStreamIndexOfTheServer()
 	{
 		// the file: video 0, audio 1 and 2, subtitles 3, 4 and 5
