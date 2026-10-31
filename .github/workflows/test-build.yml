@@ -12,10 +12,6 @@ on:
         description: 'Also build the Inno Setup installers'
         type: boolean
         default: false
-      nuget-cache:
-        description: 'Restore NuGet packages from the cache (untick to download them, e.g. to compare speeds)'
-        type: boolean
-        default: true
 
 env:
   MAIN_PROJECT_PATH: 'FluentFin\FluentFin.csproj'
@@ -23,7 +19,7 @@ env:
   PUBLISH_FOLDER_ARM64: 'FluentFin\bin\publish-arm64'
   FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
-  # NuGet packages on the runner's D: drive (where the workspace is): extracting the NuGet cache to C: is much slower
+  # NuGet packages on the runner's D: drive, where the workspace is
   NUGET_PACKAGES: 'D:\nuget-packages'
 
 jobs:
@@ -59,13 +55,6 @@ jobs:
       with:
         ref: ${{ needs.master-check.outputs.sha }}
 
-    - id: nuget
-      uses: actions/cache/restore@v4
-      with:
-        key: nuget-${{ hashFiles('**/*.csproj') }}
-        restore-keys: nuget-
-        path: D:\nuget-packages
-
     - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0'
@@ -100,11 +89,6 @@ jobs:
           **/obj
           .build-cache-sha
 
-    - if: steps.nuget.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        key: nuget-${{ hashFiles('**/*.csproj') }}
-        path: D:\nuget-packages
 
   build:
     needs: [master-check, master-build]
@@ -116,15 +100,7 @@ jobs:
       with:
         ref: ${{ inputs.ref }}
 
-    # NuGet packages are cached on their own, keyed on the project files, and saved only when those change
-    - id: nuget
-      if: inputs.nuget-cache
-      uses: actions/cache/restore@v4
-      with:
-        key: nuget-${{ hashFiles('**/*.csproj') }}
-        restore-keys: nuget-
-        path: D:\nuget-packages
-
+    # NuGet packages are not cached: downloading them (~40 s) is faster than restoring a cache of them (~60 s + a ~3 min save)
     # obj folders of the newest earlier build of this ref, else of master's latest build
     - id: obj
       uses: actions/cache/restore@v4
@@ -166,7 +142,7 @@ jobs:
     - name: Add Windows Community Toolkit labs nuget source
       run: dotnet nuget add source ${{ env.CTK_LABS_INDEX }} -n CommunityToolkitLabs
 
-    # Its own step so the time spent getting packages (from the cache, else downloaded) shows up separately;
+    # Its own step so the time spent downloading packages shows up separately;
     # the restores inside the publish steps below then only re-check them.
     - name: Restore packages
       shell: pwsh
@@ -308,8 +284,3 @@ jobs:
         key: archives-ref-${{ inputs.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: compressed
 
-    - if: inputs.nuget-cache && steps.nuget.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        key: nuget-${{ hashFiles('**/*.csproj') }}
-        path: D:\nuget-packages
