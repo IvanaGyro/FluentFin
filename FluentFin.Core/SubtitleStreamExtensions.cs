@@ -11,13 +11,6 @@ public static class SubtitleStreamExtensions
 	/// </summary>
 	public static bool UsesDeliveryUrl(this MediaStream stream, PlaybackProgressInfo_PlayMethod playMethod)
 	{
-		if (stream.IsExternal == true)
-		{
-			return true;
-		}
-
-		return playMethod == PlaybackProgressInfo_PlayMethod.Transcode
-			&& !string.IsNullOrEmpty(stream.DeliveryUrl)
-			&& string.Equals(stream.DeliveryMethod?.ToString(), "External", StringComparison.OrdinalIgnoreCase);
+		return stream.IsExternal == true;
 	}
 }

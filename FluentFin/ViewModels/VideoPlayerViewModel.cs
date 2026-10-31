@@ -277,29 +277,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// </summary>
 	internal async Task OpenSubtitlesWhenReady(IMediaPlayerController mp, PlaylistItem item, MediaResponse response, MediaStream stream)
 	{
-		if (!stream.UsesDeliveryUrl(response.PlayMethod))
-		{
-			var subtitles = response.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
-			var ordinal = subtitles.Where(x => x.IsExternal is false).IndexOf(stream);
-
-			for (var attempt = 0; attempt < 40 && mp.SubtitleTrackCount <= ordinal; attempt++)
-			{
-				await Task.Delay(TimeSpan.FromMilliseconds(250));
-
-				// another item or another stream of the same item has been started in the meantime
-				if (!ReferenceEquals(item.Media, response))
-				{
-					return;
-				}
-			}
-
-			if (mp.SubtitleTrackCount <= ordinal)
-			{
-				logger.LogWarning("The player reported {Count} subtitle tracks after 10 seconds, trying to open track {Ordinal} anyway", mp.SubtitleTrackCount, ordinal);
-			}
-		}
-
 		OpenSubtitles(mp, response, stream);
+		await Task.CompletedTask;
 	}
 
 	private void OpenSubtitles(IMediaPlayerController mp, MediaResponse response, MediaStream stream)
