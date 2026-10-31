@@ -165,7 +165,7 @@ public static class Converters
 			}
 			else
 			{
-				var subtitleIndex = response!.MediaSourceInfo.EmbeddedSubtitleOrdinal(stream);
+				var subtitleIndex = subtitles.Where(x => x.IsExternal is false).IndexOf(stream);
 				if (stream.Index is not { } trackIndex)
 				{
 					return;

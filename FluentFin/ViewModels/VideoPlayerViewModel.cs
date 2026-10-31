@@ -279,7 +279,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	{
 		if (!stream.UsesDeliveryUrl(response.PlayMethod))
 		{
-			var ordinal = response.MediaSourceInfo.EmbeddedSubtitleOrdinal(stream);
+			var subtitles = response.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
+			var ordinal = subtitles.Where(x => x.IsExternal is false).IndexOf(stream);
 
 			for (var attempt = 0; attempt < 40 && mp.SubtitleTrackCount <= ordinal; attempt++)
 			{
@@ -308,6 +309,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		var subtitles = response?.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
+
 		try
 		{
 			if (stream.UsesDeliveryUrl(response!.PlayMethod))
@@ -317,7 +320,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			}
 			else
 			{
-				var subtitleIndex = response!.MediaSourceInfo.EmbeddedSubtitleOrdinal(stream);
+				var subtitleIndex = subtitles.Where(x => x.IsExternal is false).IndexOf(stream);
 				if (stream.Index is not { } trackIndex)
 				{
 					return;
