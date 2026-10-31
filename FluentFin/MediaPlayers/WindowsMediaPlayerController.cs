@@ -42,6 +42,25 @@ namespace FluentFin.MediaPlayers
 
 		public ServerAudioSelection? ServerAudio { get; set; }
 
+		public string DescribeSubtitleTracks()
+		{
+			try
+			{
+				if (_mediaItem is null)
+				{
+					return "no media";
+				}
+
+				var tracks = _mediaItem.TimedMetadataTracks;
+				return string.Join("; ", Enumerable.Range(0, tracks.Count).Select(i =>
+					$"[{i}] id={tracks[i].Id}, label={tracks[i].Label}, language={tracks[i].Language}, kind={tracks[i].TimedMetadataKind}, mode={tracks.GetPresentationMode((uint)i)}"));
+			}
+			catch (Exception ex)
+			{
+				return $"unavailable ({ex.Message})";
+			}
+		}
+
 		public MediaPlayerState State => ConvertState(_mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed));
 		public TimeSpan Position => _mp.SafeGetValue(mp => mp.Position, TimeSpan.Zero);
 		public bool IsPlaying => _mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed) is Windows.Media.Playback.MediaPlayerState.Playing;

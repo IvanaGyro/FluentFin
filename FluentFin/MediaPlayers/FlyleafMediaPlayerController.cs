@@ -40,6 +40,19 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public ServerAudioSelection? ServerAudio { get; set; }
 
+	public string DescribeSubtitleTracks()
+	{
+		try
+		{
+			return $"subtitlesEnabled={_mp.Config.Subtitles.Enabled}; " + string.Join("; ", _mp.Subtitles.Streams.Select((x, i) =>
+				$"[{i}] streamIndex={x.StreamIndex}, language={x.Language?.TopEnglishName}, title={x.Title}, enabled={x.Enabled}"));
+		}
+		catch (Exception ex)
+		{
+			return $"unavailable ({ex.Message})";
+		}
+	}
+
 	public MediaPlayerState State => ConvertState(_mp.Status);
 
 	public TimeSpan Position => new(_mp.CurTime);

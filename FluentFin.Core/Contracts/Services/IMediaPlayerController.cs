@@ -34,6 +34,9 @@ public interface IMediaPlayerController : IDisposable
 	/// </summary>
 	ServerAudioSelection? ServerAudio { get; set; }
 
+	/// <summary>The subtitle tracks the backend currently sees, for the log.</summary>
+	string DescribeSubtitleTracks();
+
 	IObservable<TimeSpan> DurationChanged { get; }
 	IObservable<TimeSpan> PositionChanged { get; }
 	IObservable<Unit> Playing { get; }

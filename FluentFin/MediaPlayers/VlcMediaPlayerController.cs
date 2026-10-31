@@ -32,6 +32,18 @@ namespace FluentFin.MediaPlayers
 		// the error event has no details, LibVLC reports the reason (e.g. http errors) through its log
 		public ServerAudioSelection? ServerAudio { get; set; }
 
+		public string DescribeSubtitleTracks()
+		{
+			try
+			{
+				return $"current={_mp.Spu}; " + string.Join("; ", _mp.SpuDescription.Select(x => $"id={x.Id}, name={x.Name}"));
+			}
+			catch (Exception ex)
+			{
+				return $"unavailable ({ex.Message})";
+			}
+		}
+
 		public string? LastError
 		{
 			get

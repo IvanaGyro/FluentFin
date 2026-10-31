@@ -372,6 +372,24 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		await playbackSessions.ReportStartAsync(session, GetPlaybackState(MediaPlayer));
+
+		_ = LogSubtitleTracksLater(MediaPlayer, version);
+	}
+
+	/// <summary>The backends only know their tracks some time after opening, so look again after a few seconds.</summary>
+	private async Task LogSubtitleTracksLater(IMediaPlayerController mp, int version)
+	{
+		foreach (var delay in new[] { 5, 10 })
+		{
+			await Task.Delay(TimeSpan.FromSeconds(delay));
+
+			if (version != _loadVersion)
+			{
+				return;
+			}
+
+			logger.LogInformation("Subtitle tracks seen by {Player}: {Tracks}", mp.GetType().Name, mp.DescribeSubtitleTracks());
+		}
 	}
 
 	private static string RedactApiKey(Uri uri) => uri.MaskApiKey();
