@@ -92,6 +92,67 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Assert.True(seconds > 1.5, $"{seconds:0.00}s of audio reached the audio device in 3s of playback after switching the track");
 	}
 
+	/// <summary>
+	/// What the app does when it resumes an item: open with autoplay, seek to the resume position at once (while Flyleaf
+	/// still sets up the audio filters and the audio device) and, for a track picked on the item's page, switch the audio
+	/// track a moment later. Repeated, as the crash on arm64 (an access violation in av_buffersink_get_frame_flags) depends
+	/// on timing.
+	/// </summary>
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void Audio_ReachesTheAudioDevice_WhenSeekingRightAfterOpening(bool switchTrack)
+	{
+		StartEngine();
+		Assert.False(Engine.Audio.Failed, "Flyleaf found no audio device. The workflows install a virtual one; locally, enable a playback device.");
+
+		for (var i = 0; i < 8; i++)
+		{
+			using var player = new Player();
+			var opened = player.Open(Media);
+			Assert.True(opened.Success, opened.Error);
+			player.SeekAccurate(6000);
+			if (switchTrack)
+			{
+				Thread.Sleep(300);
+				player.Open(player.Audio.Streams[i % 4]);
+			}
+
+			var seconds = PlayAndMeasure(player, TimeSpan.FromSeconds(2));
+
+			Report(player, $"seek right after opening #{i}{(switchTrack ? $", switched to track {i % 4}" : "")}", seconds);
+			AssertNoErrors(player);
+			Assert.True(player.CurTime >= TimeSpan.FromSeconds(6.5).Ticks, $"the seek to 6s did not happen, the position is {TimeSpan.FromTicks(player.CurTime)}");
+			Assert.True(seconds > 0.8, $"{seconds:0.00}s of audio reached the audio device in 2s of playback after the seek");
+		}
+	}
+
+	/// <summary>
+	/// Plays a file with every decoder, filter and renderer path Flyleaf sets up for it, also without an audio device;
+	/// the audio is checked when there is one. A native crash in FFmpeg (e.g. an FFmpeg build that does not match the
+	/// ABI Flyleaf was built for) kills the test host.
+	/// </summary>
+	[Theory]
+	[InlineData("audio-tracks.mkv")]
+	[InlineData("hevc-main10.mkv")]
+	public void Playback_Advances(string file)
+	{
+		StartEngine();
+		using var player = new Player();
+		player.Config.Player.AutoPlay = false;
+		var opened = player.Open(Path.Combine(AppContext.BaseDirectory, "Media", file));
+		Assert.True(opened.Success, opened.Error);
+
+		player.Play();
+		Thread.Sleep(TimeSpan.FromSeconds(1));
+		var seconds = PlayAndMeasure(player, TimeSpan.FromSeconds(2));
+
+		Report(player, $"{file} (video {player.decoder.VideoStream?.Codec} {player.decoder.VideoStream?.PixelFormatStr} accelerated={player.decoder.VideoDecoder.VideoAccelerated}, audio device found: {!Engine.Audio.Failed})", seconds);
+		AssertNoErrors(player);
+		Assert.True(player.CurTime >= TimeSpan.FromSeconds(2).Ticks, $"playback did not advance, the position is {TimeSpan.FromTicks(player.CurTime)}");
+		Assert.True(Engine.Audio.Failed || seconds > 1, $"{seconds:0.00}s of audio reached the audio device in 2s of playback");
+	}
+
 	/// <summary>Opens the media paused, with the given audio track (index into <see cref="Audio.Streams"/>).</summary>
 	private Player Open(int track)
 	{
@@ -152,7 +213,8 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 				return;
 			}
 
-			var config = FlyleafEngineConfig.Create(FFmpegFolder(), LogFile, FlyleafLib.LogLevel.Info);
+			var config = FlyleafEngineConfig.Create(FFmpegFolder(), LogFile,
+				Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info);
 			config.UIRefresh = false; // no UI to refresh in the tests
 			Engine.Start(config);
 		}

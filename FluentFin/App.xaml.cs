@@ -287,6 +287,16 @@ public partial class App : Application
 	private static void StartFlyleaf()
 	{
 		var location = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, "FFMpeg");
-		FlyleafLib.Engine.Start(MediaPlayers.FlyleafEngineConfig.Create(location ?? "FFmpeg"));
+		// Flyleaf's own log (audio device, decoders, errors) next to the app's log. It is written synchronously, line by
+		// line: Flyleaf writes its log file from a background task, which loses the last lines when native code crashes.
+		var log = new StreamWriter(new FileStream(Path.Combine(GetService<Core.KnownFolders>().Logs, "flyleaf.log"), FileMode.Create, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+		FlyleafLib.Logger.CustomOutput = line =>
+		{
+			lock (log)
+			{
+				log.WriteLine(line);
+			}
+		};
+		FlyleafLib.Engine.Start(MediaPlayers.FlyleafEngineConfig.Create(location ?? "FFmpeg", ":custom", FlyleafLib.LogLevel.Debug));
 	}
 }
