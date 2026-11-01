@@ -66,6 +66,8 @@
 		<PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 		<!-- copies libvlc\win-x64 / win-x86 / win-arm64 depending on $(Platform) -->
 		<PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+		<!-- probes the hardware video decoders and HDR displays for the profile of the Windows media player; FlyleafLib uses the same version -->
+		<PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
 		<PackageReference Include="WinUIEx" Version="2.9.3" />
 		<PackageReference Include="DevWinUI" Version="10.8.0" />
 	</ItemGroup>
