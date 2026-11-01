@@ -108,7 +108,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 
 		for (var i = 0; i < 8; i++)
 		{
-			using var player = new Player();
+			using var player = Guarded(new Player());
 			var opened = player.Open(Media);
 			Assert.True(opened.Success, opened.Error);
 			player.SeekAccurate(6000);
@@ -138,7 +138,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 	public void Playback_Advances(string file)
 	{
 		StartEngine();
-		using var player = new Player();
+		using var player = Guarded(new Player());
 		player.Config.Player.AutoPlay = false;
 		var opened = player.Open(Path.Combine(AppContext.BaseDirectory, "Media", file));
 		Assert.True(opened.Success, opened.Error);
@@ -154,13 +154,20 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Assert.True(Engine.Audio.Failed || seconds > 1, $"{seconds:0.00}s of audio reached the audio device in 2s of playback");
 	}
 
+	/// <summary>The player with the audio decoder thread guard of the app (<see cref="FlyleafAudioThread.Guard"/>).</summary>
+	private static Player Guarded(Player player)
+	{
+		FlyleafAudioThread.Guard(player);
+		return player;
+	}
+
 	/// <summary>Opens the media paused, with the given audio track (index into <see cref="Audio.Streams"/>).</summary>
 	private Player Open(int track)
 	{
 		StartEngine();
 		Assert.False(Engine.Audio.Failed, "Flyleaf found no audio device. The workflows install a virtual one; locally, enable a playback device.");
 
-		var player = new Player();
+		var player = Guarded(new Player());
 		player.Config.Player.AutoPlay = false;
 		var opened = player.Open(Media);
 		Assert.True(opened.Success, opened.Error);
@@ -190,6 +197,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 	private void Report(Player player, string what, double seconds)
 	{
 		var decoder = player.decoder.AudioDecoder;
+		output.WriteLine($"{what}: audio decoder thread floating point control word before/after the device setup {FlyleafAudioThread.LastDeviceSetup?.Before:X}/{FlyleafAudioThread.LastDeviceSetup?.After:X}");
 		output.WriteLine($"{what}: {seconds:0.00}s of audio delivered, status={player.Status}, position={TimeSpan.FromTicks(player.CurTime)}, " +
 			$"decoder={decoder.Status} {decoder.SampleRate}Hz {decoder.SampleBytes}B/sample, device='{player.Audio.Device}', volume={player.Audio.Volume}, mute={player.Audio.Mute}");
 		foreach (var line in PlayerLog(player).Split('\n').Where(x => x.Contains("| Error") || x.Contains("| Warn") || x.Contains("Audio initialized")).Take(10))
