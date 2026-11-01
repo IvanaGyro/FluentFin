@@ -1,10 +1,15 @@
 ﻿using Jellyfin.Sdk.Generated.Models;
+using Windows.Media.Devices;
 
 namespace FluentFin;
 
 public sealed class WmpDeviceProfileManager
 {
-	public static DeviceProfile Profile { get; private set; } = null!;
+	private static readonly Lock _lock = new();
+	private static nint _window;
+	private static WmpCapabilities? _capabilities;
+	private static WmpCapabilities? _profileCapabilities;
+	private static DeviceProfile? _profile;
 
 	/// <summary>
 	/// The widest video that is direct played, DCI 8K. Each codec is limited further to what this machine decodes, see
@@ -19,9 +24,53 @@ public sealed class WmpDeviceProfileManager
 	/// </summary>
 	internal const int MediaFoundationDecoderMaxWidth = 4096;
 
-	public static async Task InitializeAsync()
+	/// <param name="window">The window that shows the video, whose display is checked for HDR.</param>
+	public static async Task InitializeAsync(nint window)
 	{
-		Profile = Build(await WmpCapabilityProbe.ProbeAsync());
+		_window = window;
+		var capabilities = await WmpCapabilityProbe.ProbeAsync(window);
+		lock (_lock)
+		{
+			_capabilities = capabilities;
+		}
+
+		// the default audio output changes when headphones or a receiver are plugged in
+		MediaDevice.DefaultAudioRenderDeviceChanged += async (_, _) =>
+		{
+			uint channels = await WmpCapabilityProbe.GetAudioChannelCountAsync();
+			lock (_lock)
+			{
+				_capabilities = _capabilities! with { AudioChannelCount = channels };
+			}
+		};
+	}
+
+	/// <summary>
+	/// The profile for what this machine plays now. The HDR mode of the display is read again on every call, it changes with the
+	/// Windows HDR setting and when the window moves to another display.
+	/// </summary>
+	public static DeviceProfile Profile
+	{
+		get
+		{
+			bool isHdrDisplay = WmpCapabilityProbe.IsHdrDisplay(_window);
+			lock (_lock)
+			{
+				var capabilities = _capabilities ?? throw new InvalidOperationException("The capabilities are probed in InitializeAsync");
+				if (capabilities.IsHdrDisplay != isHdrDisplay)
+				{
+					capabilities = _capabilities = capabilities with { IsHdrDisplay = isHdrDisplay };
+				}
+
+				if (_profile is null || !ReferenceEquals(_profileCapabilities, capabilities))
+				{
+					_profile = Build(capabilities);
+					_profileCapabilities = capabilities;
+				}
+
+				return _profile;
+			}
+		}
 	}
 
 	/// <summary>
@@ -46,7 +95,9 @@ public sealed class WmpDeviceProfileManager
 	// what Media Foundation, which the Windows media player plays with, has on this machine.
 	internal static DeviceProfile Build(WmpCapabilities capabilities)
 	{
-		const int maxBitrate = 120_000_000;
+		// No limit on the bitrate of direct play: what the network carries is measured by the bitrate test of the client outside the
+		// local network and sent as the MaxStreamingBitrate of the playback request.
+		const int maxBitrate = int.MaxValue;
 		uint audioChannelCount = capabilities.AudioChannelCount;
 
 		bool canPlayVorbis = capabilities.CanDecodeAudio(WmpSubtypes.Vorbis);
@@ -56,14 +107,14 @@ public sealed class WmpDeviceProfileManager
 			webmAudioCodecs.Add("vorbis");
 		}
 
-		// Media Foundation reads Matroska since the first Windows 10, older than the oldest Windows the app runs on (1809)
+		// whether Media Foundation reads each container is checked at the end, by RemoveUnreadableContainers
 		bool canPlayMkv = true;
 
 		DeviceProfile profile = new()
 		{
 			MaxStreamingBitrate = maxBitrate,
-			MaxStaticBitrate = 100_000_000,
-			MusicStreamingTranscodingBitrate = Math.Min(maxBitrate, 384_000),
+			MaxStaticBitrate = maxBitrate,
+			MusicStreamingTranscodingBitrate = 384_000,
 			DirectPlayProfiles = [],
 			TranscodingProfiles = [],
 			ContainerProfiles = [],
@@ -968,12 +1019,6 @@ public sealed class WmpDeviceProfileManager
 			new ProfileCondition
 			{
 				Condition = ProfileCondition_Condition.LessThanEqual,
-				Property = ProfileCondition_Property.VideoBitrate,
-				Value = maxBitrate.ToString(),
-			},
-			new ProfileCondition
-			{
-				Condition = ProfileCondition_Condition.LessThanEqual,
 				Property = ProfileCondition_Property.Width,
 				Value = MaxVideoWidth8K.ToString(),
 				IsRequired = false,
@@ -1044,7 +1089,66 @@ public sealed class WmpDeviceProfileManager
             */
 		}
 
+		RemoveUnreadableContainers(profile, capabilities);
 		return profile;
+	}
+
+	/// <summary>
+	/// The file extensions and MIME types each container is registered with in Media Foundation. HLS is not listed, Windows reads it
+	/// with its adaptive streaming source, documented on https://learn.microsoft.com/windows/apps/develop/media-playback/adaptive-streaming.
+	/// </summary>
+	internal static readonly IReadOnlyDictionary<string, string[]> ContainerHandlers = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+	{
+		["mkv"] = [".mkv", "video/x-matroska"],
+		["webm"] = [".webm", "video/webm", "audio/webm"],
+		["webma"] = [".weba", "audio/webm"],
+		["mp4"] = [".mp4", "video/mp4"],
+		["m4v"] = [".m4v", "video/x-m4v"],
+		["mov"] = [".mov", "video/quicktime"],
+		["m2ts"] = [".m2ts", ".mts", "video/vnd.dlna.mpeg-tts"],
+		["ts"] = [".ts", "video/mp2t"],
+		["mpegts"] = [".ts", "video/mp2t"],
+		["wmv"] = [".wmv", "video/x-ms-wmv"],
+		["asf"] = [".asf", "video/x-ms-asf"],
+		["wma"] = [".wma", "audio/x-ms-wma"],
+		["avi"] = [".avi", "video/avi", "video/msvideo", "video/x-msvideo"],
+		["mpg"] = [".mpg", "video/mpeg"],
+		["mpeg"] = [".mpeg", "video/mpeg"],
+		["aac"] = [".aac", ".adts", "audio/aac", "audio/aacp", "audio/vnd.dlna.adts"],
+		["m4a"] = [".m4a", "audio/mp4", "audio/x-m4a"],
+		["m4b"] = [".m4b", ".m4a", "audio/mp4"],
+		["alac"] = [".m4a", "audio/mp4"],
+		["mp3"] = [".mp3", "audio/mpeg", "audio/mp3"],
+		["mp2"] = [".mp2", ".mpa"],
+		["flac"] = [".flac", "audio/flac", "audio/x-flac"],
+		["wav"] = [".wav", "audio/wav", "audio/x-wav"],
+		["ogg"] = [".ogg", "audio/ogg"],
+		["oga"] = [".oga", "audio/ogg"],
+		["opus"] = [".opus", "audio/ogg", "audio/opus"],
+	};
+
+	/// <summary>
+	/// Drops the containers that Media Foundation has no reader for on this machine from the direct play profiles and from the
+	/// transcoding profiles that are streamed as a file.
+	/// </summary>
+	private static void RemoveUnreadableContainers(DeviceProfile profile, WmpCapabilities capabilities)
+	{
+		bool CanRead(string container) => !ContainerHandlers.TryGetValue(container, out var handlers) || capabilities.CanReadContainer(handlers);
+
+		foreach (var directPlay in profile.DirectPlayProfiles!.ToList())
+		{
+			var readable = directPlay.Container!.Split(',').Where(CanRead).ToList();
+			if (readable.Count == 0)
+			{
+				profile.DirectPlayProfiles!.Remove(directPlay);
+			}
+			else
+			{
+				directPlay.Container = string.Join(',', readable);
+			}
+		}
+
+		profile.TranscodingProfiles!.RemoveAll(t => t.Protocol != TranscodingProfile_Protocol.Hls && !CanRead(t.Container!));
 	}
 
 	/// <summary>

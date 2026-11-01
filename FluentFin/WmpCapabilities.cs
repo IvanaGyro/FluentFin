@@ -1,4 +1,6 @@
-﻿using SharpGen.Runtime;
+﻿using System.Runtime.InteropServices;
+using Microsoft.Win32;
+using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -77,8 +79,16 @@ public sealed record WmpCapabilities
 	/// <summary>The largest picture each hardware decoder of the GPU decodes; a decoder that the GPU lacks is not listed.</summary>
 	public required IReadOnlyDictionary<HardwareDecoder, VideoSize> HardwareDecoders { get; init; }
 
-	/// <summary>Whether a display is in HDR (BT.2100 PQ) mode, so that HDR video is shown as HDR instead of washed out.</summary>
+	/// <summary>
+	/// Whether the display that shows the app is in HDR (BT.2100 PQ) mode, so that HDR video is shown as HDR instead of washed out.
+	/// </summary>
 	public required bool IsHdrDisplay { get; init; }
+
+	/// <summary>
+	/// The file extensions and MIME types that Media Foundation has a byte stream handler (a container reader) for, lower case; null
+	/// when they could not be read.
+	/// </summary>
+	public IReadOnlySet<string>? ByteStreamHandlers { get; init; }
 
 	/// <summary>
 	/// Whether Media Foundation renders Dolby Vision profile 5 (no compatible base layer), which needs the Dolby Vision Extensions
@@ -91,6 +101,15 @@ public sealed record WmpCapabilities
 	public bool CanDecodeVideo(Guid subtype) => VideoDecoders.Contains(subtype);
 
 	public bool CanDecodeAudio(Guid subtype) => AudioDecoders.Contains(subtype);
+
+	/// <summary>
+	/// Whether Media Foundation reads a container, given by the file extensions and MIME types it is known by. When the handlers could
+	/// not be read the container is assumed to be readable, the server then falls back to transcoding if it is not.
+	/// </summary>
+	public bool CanReadContainer(IEnumerable<string> extensionsAndMimeTypes)
+	{
+		return ByteStreamHandlers is null || extensionsAndMimeTypes.Any(ByteStreamHandlers.Contains);
+	}
 
 	public VideoSize? HardwareMaxSize(HardwareDecoder decoder) => HardwareDecoders.TryGetValue(decoder, out var size) ? size : null;
 }
@@ -136,17 +155,51 @@ public static class WmpCapabilityProbe
 		new(1280, 720),
 	];
 
-	public static async Task<WmpCapabilities> ProbeAsync()
+	/// <param name="window">The window that shows the video, its display is checked for HDR; zero checks every display.</param>
+	public static async Task<WmpCapabilities> ProbeAsync(nint window)
 	{
 		return new WmpCapabilities
 		{
 			VideoDecoders = await FindDecodersAsync(CodecKind.Video, WmpSubtypes.Video),
 			AudioDecoders = await FindDecodersAsync(CodecKind.Audio, WmpSubtypes.Audio),
+			ByteStreamHandlers = ReadByteStreamHandlers(),
 			HardwareDecoders = ProbeHardwareDecoders(),
-			IsHdrDisplay = IsHdrDisplay(),
+			IsHdrDisplay = IsHdrDisplay(window),
 			CanPlayDolbyVision = CanPlayDolbyVision(),
 			AudioChannelCount = await GetAudioChannelCountAsync(),
 		};
+	}
+
+	private const string ByteStreamHandlersKey = @"SOFTWARE\Microsoft\Windows Media Foundation\ByteStreamHandlers";
+
+	/// <summary>
+	/// The byte stream handlers registered with Media Foundation, keyed by file extension (".mkv") and MIME type ("video/x-matroska").
+	/// The source resolver of Media Foundation, which MediaSource.CreateFromUri uses, picks the container reader from this table.
+	/// </summary>
+	private static HashSet<string>? ReadByteStreamHandlers()
+	{
+		HashSet<string> handlers = new(StringComparer.OrdinalIgnoreCase);
+		bool read = false;
+		foreach (RegistryKey root in new[] { Registry.LocalMachine, Registry.CurrentUser })
+		{
+			try
+			{
+				using RegistryKey? key = root.OpenSubKey(ByteStreamHandlersKey);
+				if (key is null)
+				{
+					continue;
+				}
+
+				read = true;
+				handlers.UnionWith(key.GetSubKeyNames());
+			}
+			catch
+			{
+				// a key that cannot be read adds nothing
+			}
+		}
+
+		return read ? handlers : null;
 	}
 
 	/// <summary>
@@ -293,13 +346,20 @@ public static class WmpCapabilityProbe
 		}
 	}
 
+	[DllImport("user32.dll")]
+	private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+	private const uint MonitorDefaultToNearest = 2;
+
 	/// <summary>
-	/// Whether a display shows HDR, the Windows "Use HDR" setting is on for it (its desktop is in the BT.2100 PQ color space).
+	/// Whether the display of the window shows HDR, the Windows "Use HDR" setting is on for it (its desktop is in the BT.2100 PQ color
+	/// space). Without a window every display is checked.
 	/// </summary>
-	private static bool IsHdrDisplay()
+	public static bool IsHdrDisplay(nint window)
 	{
 		try
 		{
+			nint monitor = window == 0 ? 0 : MonitorFromWindow(window, MonitorDefaultToNearest);
 			using IDXGIFactory1 factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
 			for (uint adapterIndex = 0; factory.EnumAdapters1(adapterIndex, out IDXGIAdapter1? adapter).Success; adapterIndex++)
 			{
@@ -310,7 +370,14 @@ public static class WmpCapabilityProbe
 						using (output)
 						{
 							using IDXGIOutput6? output6 = output.QueryInterfaceOrNull<IDXGIOutput6>();
-							if (output6?.Description1.ColorSpace == ColorSpaceType.RgbFullG2084NoneP2020)
+							if (output6 is null)
+							{
+								continue;
+							}
+
+							OutputDescription1 description = output6.Description1;
+							if ((monitor == 0 || description.Monitor == monitor)
+								&& description.ColorSpace == ColorSpaceType.RgbFullG2084NoneP2020)
 							{
 								return true;
 							}
@@ -349,7 +416,8 @@ public static class WmpCapabilityProbe
 		}
 	}
 
-	private static async Task<uint> GetAudioChannelCountAsync()
+	/// <summary>The channels of the default audio output, which the Windows media player plays to.</summary>
+	public static async Task<uint> GetAudioChannelCountAsync()
 	{
 		try
 		{

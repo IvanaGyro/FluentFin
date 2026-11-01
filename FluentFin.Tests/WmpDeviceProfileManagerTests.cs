@@ -116,6 +116,42 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 		Assert.Equal(hevc.Length, hevc.Distinct().Count());
 	}
 
+	[Fact]
+	public void DirectPlay_HasNoBitrateLimit()
+	{
+		var profile = WmpDeviceProfileManager.Build(Capabilities());
+
+		Assert.Equal(int.MaxValue, profile.MaxStreamingBitrate);
+		Assert.Equal(int.MaxValue, profile.MaxStaticBitrate);
+		Assert.DoesNotContain(profile.CodecProfiles!.SelectMany(p => p.Conditions ?? []), c => c.Property == ProfileCondition_Property.VideoBitrate);
+	}
+
+	[Fact]
+	public void ContainersWithoutAReader_AreNotDirectPlayed()
+	{
+		var profile = WmpDeviceProfileManager.Build(Capabilities(handlers: [".mp4", "video/x-matroska", ".mp3", ".wav"]));
+
+		var containers = profile.DirectPlayProfiles!.SelectMany(p => p.Container!.Split(',')).ToHashSet();
+		Assert.Contains("mkv", containers);
+		Assert.Contains("mp4", containers);
+		Assert.DoesNotContain("m4v", containers);
+		Assert.DoesNotContain("avi", containers);
+		Assert.DoesNotContain("ts", containers);
+
+		// HLS is read by the adaptive streaming source, not a byte stream handler, and transcoding goes through it
+		Assert.Contains("hls", containers);
+		Assert.Contains(profile.TranscodingProfiles!, t => t.Protocol == TranscodingProfile_Protocol.Hls && t.Type == TranscodingProfile_Type.Video);
+		Assert.DoesNotContain(profile.TranscodingProfiles!, t => t.Container == "aac");
+	}
+
+	[Fact]
+	public void ContainersAreKept_WhenTheReadersCannotBeRead()
+	{
+		var profile = WmpDeviceProfileManager.Build(Capabilities());
+
+		Assert.Contains(profile.DirectPlayProfiles!, p => p.Container == "avi");
+	}
+
 	[Theory]
 	[InlineData(null, null, null)]
 	[InlineData(3840, null, 3840)]
@@ -135,11 +171,12 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 	[Fact]
 	public async Task Probe_ReadsTheMachine()
 	{
-		var capabilities = await WmpCapabilityProbe.ProbeAsync();
+		var capabilities = await WmpCapabilityProbe.ProbeAsync(0);
 
 		output.WriteLine($"Video decoders: {string.Join(", ", capabilities.VideoDecoders)}");
 		output.WriteLine($"Audio decoders: {string.Join(", ", capabilities.AudioDecoders)}");
 		output.WriteLine($"Hardware decoders: {string.Join(", ", capabilities.HardwareDecoders.Select(x => $"{x.Key} {x.Value.Width}x{x.Value.Height}"))}");
+		output.WriteLine($"Byte stream handlers: {(capabilities.ByteStreamHandlers is { } handlers ? string.Join(", ", handlers.Order()) : "not read")}");
 		output.WriteLine($"HDR display: {capabilities.IsHdrDisplay}, Dolby Vision: {capabilities.CanPlayDolbyVision}, audio channels: {capabilities.AudioChannelCount}");
 
 		var profile = WmpDeviceProfileManager.Build(capabilities);
@@ -151,7 +188,8 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 		Guid[]? audio = null,
 		Dictionary<HardwareDecoder, VideoSize>? hardware = null,
 		bool hdr = false,
-		bool dolbyVision = false)
+		bool dolbyVision = false,
+		string[]? handlers = null)
 	{
 		return new WmpCapabilities
 		{
@@ -160,6 +198,7 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 			HardwareDecoders = hardware ?? [],
 			IsHdrDisplay = hdr,
 			CanPlayDolbyVision = dolbyVision,
+			ByteStreamHandlers = handlers is null ? null : new HashSet<string>(handlers, StringComparer.OrdinalIgnoreCase),
 			AudioChannelCount = 2,
 		};
 	}
