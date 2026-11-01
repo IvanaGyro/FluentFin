@@ -52,9 +52,27 @@ public sealed class PlaybackInfoTests
 		var sections = PlaybackInfo.Build(media, audioStreamIndex: 2, subtitleStreamIndex: -1, playerName: "Vlc");
 
 		Assert.Equal(["Playback info", "Transcoding info", "Video", "Audio"], sections.Select(x => x.Title));
-		Assert.Contains(sections[1].Rows, x => x is { Label: "Reasons", Value: "Audio codec not supported" });
+		Assert.Contains(sections[1].Rows, x => x is { Label: "Reason", Value: "Audio codec not supported" });
 		Assert.Contains(sections[2].Rows, x => x is { Label: "Resolution", Value: "1920x1080" });
 		Assert.Contains(sections[3].Rows, x => x is { Label: "Codec", Value: "AAC" });
+	}
+
+	[Fact]
+	public void Build_ForTranscode_PutsEveryReasonOnItsOwnLineAndShowsTheTranscodedStream()
+	{
+		var source = new MediaSourceInfo
+		{
+			TranscodingUrl = "/videos/1/master.m3u8?TranscodeReasons=AudioCodecNotSupported,ContainerBitrateExceedsLimit",
+		};
+		var media = new MediaResponse(new Uri("http://server/x"), PlaybackProgressInfo_PlayMethod.Transcode, "s", "m", source);
+		var live = new TranscodingInfo { Container = "ts", VideoCodec = "h264", IsVideoDirect = false, AudioCodec = "aac", IsAudioDirect = true, Width = 1280, Height = 720, Bitrate = 4_000_000 };
+
+		var rows = PlaybackInfo.Build(media, null, null, null, live).Single(x => x.Title == "Transcoding info").Rows;
+
+		Assert.Contains(rows, x => x is { Label: "Reasons", Value: "Audio codec not supported\nContainer bitrate exceeds limit" });
+		Assert.Contains(rows, x => x is { Label: "Video", Value: "H264 (transcoded)" });
+		Assert.Contains(rows, x => x is { Label: "Audio", Value: "AAC (direct)" });
+		Assert.Contains(rows, x => x is { Label: "Resolution", Value: "1280x720" });
 	}
 
 	[Fact]

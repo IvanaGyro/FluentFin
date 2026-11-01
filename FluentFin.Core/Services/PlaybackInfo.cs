@@ -12,7 +12,7 @@ public sealed record PlaybackInfoSection(string Title, IReadOnlyList<PlaybackInf
 /// <summary>What the player shows in its "Playback info" dialog, modeled on the Jellyfin web client.</summary>
 public static class PlaybackInfo
 {
-	public static IReadOnlyList<PlaybackInfoSection> Build(MediaResponse media, int? audioStreamIndex, int? subtitleStreamIndex, string? playerName)
+	public static IReadOnlyList<PlaybackInfoSection> Build(MediaResponse media, int? audioStreamIndex, int? subtitleStreamIndex, string? playerName, TranscodingInfo? transcoding = null)
 	{
 		var source = media.MediaSourceInfo;
 		var streams = source.MediaStreams ?? [];
@@ -41,9 +41,21 @@ public static class PlaybackInfo
 		if (isTranscode)
 		{
 			var transcode = new List<PlaybackInfoRow>();
-			Add(transcode, "Container", source.TranscodingContainer);
+			Add(transcode, "Container", transcoding?.Container ?? source.TranscodingContainer);
 			Add(transcode, "Protocol", source.TranscodingSubProtocol?.ToString());
-			Add(transcode, "Reasons", string.Join(", ", TranscodeReasons(source.TranscodingUrl).Select(Humanize)));
+			Add(transcode, "Video", DescribeStream(transcoding?.VideoCodec, transcoding?.IsVideoDirect));
+			Add(transcode, "Audio", DescribeStream(transcoding?.AudioCodec, transcoding?.IsAudioDirect));
+			Add(transcode, "Resolution", transcoding?.Width is > 0 && transcoding.Height is > 0 ? $"{transcoding.Width}x{transcoding.Height}" : null);
+			Add(transcode, "Bitrate", FormatBitrate(transcoding?.Bitrate));
+			Add(transcode, "Frame rate", transcoding?.Framerate is { } fps and > 0 ? string.Create(CultureInfo.InvariantCulture, $"{fps:0.###} fps") : null);
+			Add(transcode, "Audio channels", transcoding?.AudioChannels is { } ch and > 0 ? ch.ToString(CultureInfo.InvariantCulture) : null);
+			Add(transcode, "Hardware acceleration", transcoding?.HardwareAccelerationType?.ToString());
+			Add(transcode, "Progress", transcoding?.CompletionPercentage is { } done ? string.Create(CultureInfo.InvariantCulture, $"{done:0.#}%") : null);
+
+			var reasons = transcoding?.TranscodeReasons is { Count: > 0 } live
+				? live.Select(x => x.ToString() ?? "").ToList()
+				: TranscodeReasons(source.TranscodingUrl).ToList();
+			Add(transcode, reasons.Count > 1 ? "Reasons" : "Reason", string.Join('\n', reasons.Where(x => x.Length > 0).Select(Humanize)));
 			sections.Add(new("Transcoding info", transcode));
 		}
 
@@ -135,6 +147,9 @@ public static class PlaybackInfo
 		PlaybackProgressInfo_PlayMethod.Transcode => "Transcoding",
 		_ => method.ToString(),
 	};
+
+	private static string? DescribeStream(string? codec, bool? isDirect) =>
+		string.IsNullOrEmpty(codec) ? null : $"{codec.ToUpperInvariant()} ({(isDirect == true ? "direct" : "transcoded")})";
 
 	private static void Add(List<PlaybackInfoRow> rows, string label, string? value)
 	{

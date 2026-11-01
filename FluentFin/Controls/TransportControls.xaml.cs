@@ -147,11 +147,34 @@ public sealed partial class TransportControls : UserControl
 		return (duration - currentTime).ToString("hh\\:mm\\:ss");
 	}
 
-	private void PlaybackInfoFlyout_Opening(object sender, object e)
+	private async void PlaybackInfoButton_Click(object sender, RoutedEventArgs e)
+	{
+		if (PlaybackInfoBorder.Visibility == Visibility.Visible)
+		{
+			PlaybackInfoBorder.Visibility = Visibility.Collapsed;
+			return;
+		}
+
+		PlaybackInfoBorder.Visibility = Visibility.Visible;
+		var item = Playlist?.SelectedItem;
+		ShowPlaybackInfo(item, null);
+
+		// The transcoded stream is only known to the server, ask for the details of this session.
+		if (item?.Media?.PlayMethod == Jellyfin.Sdk.Generated.Models.PlaybackProgressInfo_PlayMethod.Transcode && JellyfinClient is not null)
+		{
+			var sessions = await JellyfinClient.GetControllableSessions();
+			var transcoding = sessions.FirstOrDefault(x => x.Id == SessionInfo.SessionId)?.TranscodingInfo;
+			if (transcoding is not null && PlaybackInfoBorder.Visibility == Visibility.Visible && ReferenceEquals(item, Playlist?.SelectedItem))
+			{
+				ShowPlaybackInfo(item, transcoding);
+			}
+		}
+	}
+
+	private void ShowPlaybackInfo(PlaylistItem item, Jellyfin.Sdk.Generated.Models.TranscodingInfo transcoding)
 	{
 		PlaybackInfoPanel.Children.Clear();
 
-		var item = Playlist?.SelectedItem;
 		if (item?.Media is not { } media)
 		{
 			PlaybackInfoPanel.Children.Add(new TextBlock { Text = "No media is playing." });
@@ -161,7 +184,7 @@ public sealed partial class TransportControls : UserControl
 		var audio = item.Selection?.AudioStreamIndex ?? media.MediaSourceInfo.DefaultAudioStreamIndex;
 		var subtitle = item.Selection?.SubtitleStreamIndex ?? media.MediaSourceInfo.DefaultSubtitleStreamIndex;
 
-		foreach (var section in PlaybackInfo.Build(media, audio, subtitle, Player?.GetType().Name.Replace("MediaPlayerController", "")))
+		foreach (var section in PlaybackInfo.Build(media, audio, subtitle, Player?.GetType().Name.Replace("MediaPlayerController", ""), transcoding))
 		{
 			var panel = new StackPanel { Spacing = 2 };
 			panel.Children.Add(new TextBlock { Text = section.Title, Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"] });
@@ -173,7 +196,7 @@ public sealed partial class TransportControls : UserControl
 			for (var i = 0; i < section.Rows.Count; i++)
 			{
 				grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-				var label = new TextBlock { Text = section.Rows[i].Label, Opacity = 0.7 };
+				var label = new TextBlock { Text = section.Rows[i].Label, Opacity = 0.7, VerticalAlignment = VerticalAlignment.Top };
 				var value = new TextBlock { Text = section.Rows[i].Value, TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
 				Grid.SetRow(label, i);
 				Grid.SetRow(value, i);
