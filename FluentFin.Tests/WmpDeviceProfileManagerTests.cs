@@ -1,4 +1,4 @@
-using Jellyfin.Sdk.Generated.Models;
+﻿using Jellyfin.Sdk.Generated.Models;
 using Xunit.Abstractions;
 
 namespace FluentFin.Tests;
@@ -104,6 +104,18 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 		Assert.Equal(new[] { "SDR" }, vp9);
 	}
 
+	[Fact]
+	public void DolbyVisionRenderedByWindows_IsDirectPlayedEvenToAnSdrDisplay()
+	{
+		var profile = WmpDeviceProfileManager.Build(Capabilities(video: [.. InBoxVideo, WmpSubtypes.Hevc], dolbyVision: true));
+
+		var hevc = Condition(CodecProfile(profile, "hevc"), ProfileCondition_Property.VideoRangeType).Value!.Split('|');
+		Assert.Contains("DOVI", hevc);
+		Assert.Contains("DOVIWithHDR10", hevc);
+		Assert.DoesNotContain("HDR10", hevc);
+		Assert.Equal(hevc.Length, hevc.Distinct().Count());
+	}
+
 	[Theory]
 	[InlineData(null, null, null)]
 	[InlineData(3840, null, 3840)]
@@ -128,7 +140,7 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 		output.WriteLine($"Video decoders: {string.Join(", ", capabilities.VideoDecoders)}");
 		output.WriteLine($"Audio decoders: {string.Join(", ", capabilities.AudioDecoders)}");
 		output.WriteLine($"Hardware decoders: {string.Join(", ", capabilities.HardwareDecoders.Select(x => $"{x.Key} {x.Value.Width}x{x.Value.Height}"))}");
-		output.WriteLine($"HDR display: {capabilities.IsHdrDisplay}, audio channels: {capabilities.AudioChannelCount}");
+		output.WriteLine($"HDR display: {capabilities.IsHdrDisplay}, Dolby Vision: {capabilities.CanPlayDolbyVision}, audio channels: {capabilities.AudioChannelCount}");
 
 		var profile = WmpDeviceProfileManager.Build(capabilities);
 		Assert.NotEmpty(profile.DirectPlayProfiles!);
@@ -138,7 +150,8 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 		Guid[]? video = null,
 		Guid[]? audio = null,
 		Dictionary<HardwareDecoder, VideoSize>? hardware = null,
-		bool hdr = false)
+		bool hdr = false,
+		bool dolbyVision = false)
 	{
 		return new WmpCapabilities
 		{
@@ -146,6 +159,7 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 			AudioDecoders = new HashSet<Guid>(audio ?? InBoxAudio),
 			HardwareDecoders = hardware ?? [],
 			IsHdrDisplay = hdr,
+			CanPlayDolbyVision = dolbyVision,
 			AudioChannelCount = 2,
 		};
 	}

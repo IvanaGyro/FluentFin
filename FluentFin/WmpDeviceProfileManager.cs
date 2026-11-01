@@ -779,9 +779,8 @@ public sealed class WmpDeviceProfileManager
 
 		string h264VideoRangeTypes = "SDR";
 
-		// Dolby Vision with an SDR, HDR10 or HLG base layer plays as its base layer, the decoder skips the Dolby Vision NAL units.
-		// Dolby Vision without a compatible base layer (profile 5) is not listed: it needs a Dolby Vision decoder, which Media
-		// Foundation does not expose.
+		// Dolby Vision with an SDR, HDR10 or HLG base layer plays as its base layer when Dolby Vision is not rendered, the decoder
+		// skips the Dolby Vision NAL units.
 		string hevcVideoRangeTypes = "SDR|DOVIWithSDR";
 		string av1VideoRangeTypes = "SDR|DOVIWithSDR";
 		string vp9VideoRangeTypes = "SDR";
@@ -798,6 +797,20 @@ public sealed class WmpDeviceProfileManager
 			if (capabilities.HardwareMaxSize(HardwareDecoder.Vp9Profile2) is not null)
 			{
 				vp9VideoRangeTypes += "|HDR10|HDR10Plus|HLG";
+			}
+		}
+
+		// Dolby Vision itself, including profile 5 that has no compatible base layer, when Media Foundation renders it (Dolby Vision
+		// Extensions on a Dolby Vision capable device); its display management maps it to SDR displays as well. Only HEVC is queried,
+		// there is no query for Dolby Vision in AV1 (profile 10).
+		if (capabilities.CanPlayDolbyVision)
+		{
+			foreach (string rangeType in new[] { "DOVI", "DOVIWithHDR10", "DOVIWithHDR10Plus", "DOVIWithHLG" })
+			{
+				if (!hevcVideoRangeTypes.Split('|').Contains(rangeType))
+				{
+					hevcVideoRangeTypes += "|" + rangeType;
+				}
 			}
 		}
 

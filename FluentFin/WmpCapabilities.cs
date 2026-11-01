@@ -1,4 +1,4 @@
-using SharpGen.Runtime;
+﻿using SharpGen.Runtime;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -6,6 +6,7 @@ using Windows.Devices.Enumeration;
 using Windows.Media.Audio;
 using Windows.Media.Core;
 using Windows.Media.Devices;
+using Windows.Media.Protection;
 using Windows.Media.Render;
 
 namespace FluentFin;
@@ -79,6 +80,12 @@ public sealed record WmpCapabilities
 	/// <summary>Whether a display is in HDR (BT.2100 PQ) mode, so that HDR video is shown as HDR instead of washed out.</summary>
 	public required bool IsHdrDisplay { get; init; }
 
+	/// <summary>
+	/// Whether Media Foundation renders Dolby Vision profile 5 (no compatible base layer), which needs the Dolby Vision Extensions
+	/// and a Dolby Vision capable display path; without them such video plays with wrong (green and purple) colors.
+	/// </summary>
+	public bool CanPlayDolbyVision { get; init; }
+
 	public required uint AudioChannelCount { get; init; }
 
 	public bool CanDecodeVideo(Guid subtype) => VideoDecoders.Contains(subtype);
@@ -137,6 +144,7 @@ public static class WmpCapabilityProbe
 			AudioDecoders = await FindDecodersAsync(CodecKind.Audio, WmpSubtypes.Audio),
 			HardwareDecoders = ProbeHardwareDecoders(),
 			IsHdrDisplay = IsHdrDisplay(),
+			CanPlayDolbyVision = CanPlayDolbyVision(),
 			AudioChannelCount = await GetAudioChannelCountAsync(),
 		};
 	}
@@ -317,6 +325,28 @@ public static class WmpCapabilityProbe
 		}
 
 		return false;
+	}
+
+	/// <summary>
+	/// Asks Media Foundation, through its capability query, whether it plays Dolby Vision profile 5. This is the query Chromium
+	/// (media/mojo/services/media_foundation_service.cc) makes for Dolby Vision on Windows: HEVC with the "ext-profile" feature,
+	/// which the documented features of ProtectionCapabilities.IsTypeSupported do not list. The query belongs to the PlayReady
+	/// (DRM) pipeline, the general key system is used because the media the player gets from the server is not encrypted.
+	/// </summary>
+	private static bool CanPlayDolbyVision()
+	{
+		try
+		{
+			const string type = "video/mp4;codecs=\"hvc1\";features=\"ext-profile=dvhe.05,decode-bpc=10,decode-res-x=3840,"
+				+ "decode-res-y=2160,decode-bitrate=20000,decode-fps=24\"";
+			return new ProtectionCapabilities().IsTypeSupported(type, "com.microsoft.playready.recommendation")
+				== ProtectionCapabilityResult.Probably;
+		}
+		catch
+		{
+			// the capability query is not available
+			return false;
+		}
 	}
 
 	private static async Task<uint> GetAudioChannelCountAsync()
