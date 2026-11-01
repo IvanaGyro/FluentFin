@@ -434,6 +434,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		_ => null,
 	};
 
+	private bool IsCurrentSession(PlaybackSession? session) => session is not null && ReferenceEquals(_session, session);
+
 	private PlaybackState GetPlaybackState(IMediaPlayerController mp) => new(
 		mp.Position.Ticks,
 		!mp.IsPlaying,
@@ -484,8 +486,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	private void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
-		// the backends raise these on their own native threads, stopping a player from there can deadlock
-		mp.Ended.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(async _ =>
+		// the backends raise these on their own native threads, stopping a player from there can deadlock. The session is read where
+		// the event is raised: one that arrives after its media has been replaced must not end the session of the new media
+		mp.Ended.Select(_ => Volatile.Read(ref _session)).ObserveOn(RxSchedulers.MainThreadScheduler).Where(IsCurrentSession).Subscribe(async _ =>
 		{
 			if (Playlist.CanSelectNext)
 			{
@@ -500,7 +503,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		});
 		// events of a previous media can arrive late, only act on them if the player is still in that state
 		mp.Stopped.ObserveOn(RxSchedulers.MainThreadScheduler).Where(_ => mp.State is MediaPlayerState.Stopped).Subscribe(async _ => await StopPlayback(stopPlayer: false));
-		mp.Errored.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(async _ =>
+		mp.Errored.Select(_ => Volatile.Read(ref _session)).ObserveOn(RxSchedulers.MainThreadScheduler).Where(IsCurrentSession).Subscribe(async _ =>
 		{
 			// described before the session is stopped, the backends do not report what went wrong
 			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
@@ -608,17 +611,30 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		// the play session was reported stopped, playing would restart its stream without being tracked,
 		// after a stop the group restarts playback with a new play queue, which opens a new session
-		if (_session is null)
+		var session = _session;
+		if (session is null)
 		{
 			return;
 		}
 
 		var currentTime = await JellyfinClient.SyncTime();
 
+		// a stop can arrive while waiting for the server time or for the time the command is scheduled for
+		if (!ReferenceEquals(_session, session))
+		{
+			return;
+		}
+
 		if (commandTime > currentTime)
 		{
 			mp.SeekTo(new TimeSpan(positionTicks));
 			await Task.Delay(commandTime - currentTime);
+
+			if (!ReferenceEquals(_session, session))
+			{
+				return;
+			}
+
 			mp.Play();
 		}
 		else
