@@ -276,14 +276,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
-		// A transcode already carries the chosen audio stream; for direct play the player has to switch tracks itself.
-		var audioOrdinal = selection?.AudioStreamIndex is { } selectedAudio && mediaResponse.PlayMethod == PlaybackProgressInfo_PlayMethod.DirectPlay
-			? mediaResponse.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Audio).ToList().FindIndex(x => x.Index == selectedAudio)
-			: null;
+		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
 
-		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal is >= 0 ? audioOrdinal : null);
+		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal);
 		if (!success)
 		{
 			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
@@ -377,6 +374,23 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			logger.LogWarning(ex, "Unable to open subtitle {Stream} with {Player}", stream.Describe(), mp.GetType().Name);
 		}
+	}
+
+	/// <summary>
+	/// The position, among the audio tracks of the file, of the audio stream to play, for the player to switch to. A transcode already
+	/// carries that stream; for direct play the player has to switch to it itself. It is the stream the user chose or, without a choice,
+	/// the server's default (DefaultAudioStreamIndex, which follows the user's audio language preference), which need not be the default
+	/// track of the file.
+	/// </summary>
+	internal static int? DirectPlayAudioOrdinal(PlaybackProgressInfo_PlayMethod playMethod, MediaSourceInfo source, int? audioStreamIndex)
+	{
+		if (playMethod != PlaybackProgressInfo_PlayMethod.DirectPlay || audioStreamIndex is not { } index)
+		{
+			return null;
+		}
+
+		int ordinal = source.MediaStreams?.Where(x => x.Type == MediaStream_Type.Audio).ToList().FindIndex(x => x.Index == index) ?? -1;
+		return ordinal >= 0 ? ordinal : null;
 	}
 
 	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
