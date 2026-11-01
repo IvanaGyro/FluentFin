@@ -85,7 +85,7 @@ public sealed partial class TransportControls : UserControl
 		controller.Paused.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(_ => tc.PlayPauseButton.Content = tc._playSymbol);
 		controller.VolumeChanged
 			.Where(e => e >= 0)
-			.Throttle(TimeSpan.FromSeconds(200))
+			.Throttle(TimeSpan.FromMilliseconds(200))
 			.ObserveOn(RxSchedulers.MainThreadScheduler)
 			.Subscribe(e => tc.VolumeSlider.Value = Math.Floor(e));
 		controller.SubtitleText.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(text => tc.Subtitles.Text = text);
