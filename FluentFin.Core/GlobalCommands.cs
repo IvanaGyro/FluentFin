@@ -13,7 +13,9 @@ public partial class GlobalCommands(INavigationServiceCore navigationService,
 									INavigationViewServiceCore navigationViewService)
 {
 	[RelayCommand]
-	public async Task PlayDto(BaseItemDto dto)
+	public Task PlayDto(BaseItemDto dto) => Play(dto, null);
+
+	public async Task Play(BaseItemDto dto, PlaybackSelection? selection)
 	{
 		if (SessionInfo.GroupId is not null)
 		{
@@ -34,7 +36,7 @@ public partial class GlobalCommands(INavigationServiceCore navigationService,
 		}
 		else
 		{
-			navigationService.NavigateTo("FluentFin.ViewModels.VideoPlayerViewModel", dto);
+			navigationService.NavigateTo("FluentFin.ViewModels.VideoPlayerViewModel", selection is null ? dto : new PlaybackRequest(dto, selection));
 		}
 	}
 
@@ -72,6 +74,9 @@ public partial class GlobalCommands(INavigationServiceCore navigationService,
 				break;
 			case BaseItemDto_Type.Episode:
 				navigationService.NavigateTo<EpisodeViewModel>(dto);
+				break;
+			case BaseItemDto_Type.Folder or BaseItemDto_Type.CollectionFolder or BaseItemDto_Type.BoxSet:
+				navigationService.NavigateTo<LibraryViewModel>(dto);
 				break;
 			default:
 				break;
