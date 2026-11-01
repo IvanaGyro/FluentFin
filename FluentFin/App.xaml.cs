@@ -290,9 +290,10 @@ public partial class App : Application
 		// Flyleaf's own log (audio device, decoders, errors) next to the app's log. It is written synchronously, line by
 		// line: Flyleaf writes its log file from a background task, which loses the last lines when native code crashes.
 		var log = new StreamWriter(new FileStream(Path.Combine(GetService<Core.KnownFolders>().Logs, "flyleaf.log"), FileMode.Create, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+		var logLock = new object();
 		FlyleafLib.Logger.CustomOutput = line =>
 		{
-			lock (log)
+			lock (logLock)
 			{
 				log.WriteLine(line);
 			}
