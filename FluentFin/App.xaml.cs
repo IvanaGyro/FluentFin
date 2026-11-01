@@ -287,14 +287,6 @@ public partial class App : Application
 	private static void StartFlyleaf()
 	{
 		var location = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, "FFMpeg");
-		FlyleafLib.Engine.Start(new FlyleafLib.EngineConfig()
-		{
-			FFmpegLoadProfile = Flyleaf.FFmpeg.LoadProfile.Main,    // Prevents loading avdevice/avfilter dll files
-			FFmpegPath = location ?? "FFmpeg",
-			FFmpegLogLevel = Flyleaf.FFmpeg.LogLevel.Quiet,
-			LogLevel = FlyleafLib.LogLevel.Quiet,
-			UIRefresh = true,    // Required for Activity, BufferedDuration, Stats in combination with Config.Player.Stats = true
-			UIRefreshInterval = 250,      // How often (in ms) to notify the UI
-		});
+		FlyleafLib.Engine.Start(MediaPlayers.FlyleafEngineConfig.Create(location ?? "FFmpeg"));
 	}
 }

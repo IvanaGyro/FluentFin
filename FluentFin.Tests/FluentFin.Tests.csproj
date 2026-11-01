@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <None Include="..\.editorconfig" Link=".editorconfig" />
+    <!-- generated with ffmpeg: 12s of H.264 video with E-AC-3 5.1, AC-3 5.1, AAC 5.1 and E-AC-3 stereo tracks (FlyleafAudioPlaybackTests) -->
+    <None Include="Media\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

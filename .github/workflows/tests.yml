@@ -31,5 +31,15 @@ jobs:
     -   name: 'Add Windows Community Toolkit labs nuget source'
         run: dotnet nuget add source https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json -n CommunityToolkitLabs
 
+    # FlyleafAudioPlaybackTests play audio; the runner has no audio device, so install a virtual one (VB-Cable)
+    -   name: 'Install a virtual audio device'
+        uses: LABSN/sound-ci-helpers@v1
+
+    -   name: 'Start the Windows audio service'
+        shell: pwsh
+        run: |
+            Set-Service Audiosrv -StartupType Automatic
+            Start-Service Audiosrv
+
     -   name: 'Test the app'
         run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64
