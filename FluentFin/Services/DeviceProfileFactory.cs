@@ -9,7 +9,7 @@ namespace FluentFin.Services
 	{
 		public static async Task Initialize()
 		{
-			await WmpDeviceProfileManager.InitializeAsync();
+			await WmpDeviceProfileManager.InitializeAsync(App.MainWindow.GetWindowHandle());
 		}
 
 		public DeviceProfile GetDeviceProfile() => GetDeviceProfile(settings.MediaPlayer);
