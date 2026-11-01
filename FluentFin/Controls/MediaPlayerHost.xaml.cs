@@ -91,7 +91,12 @@ public sealed partial class MediaPlayerHost : UserControl
 				TransportControls.Bar.DispatcherQueue.TryEnqueue(() =>
 				{
 					TransportControls.Bar.Visibility = Visibility.Collapsed;
-					TransportControls.TitleSection.Visibility = Visibility.Collapsed;
+					// the playback info panel is part of the title section, keep it while it is open so it can be read
+					if (TransportControls.PlaybackInfoBorder.Visibility != Visibility.Visible)
+					{
+						TransportControls.TitleSection.Visibility = Visibility.Collapsed;
+					}
+
 					ProtectedCursor.Dispose();
 				});
 			});

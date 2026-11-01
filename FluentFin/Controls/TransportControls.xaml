@@ -103,6 +103,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Image
                     Height="100"
@@ -120,6 +121,20 @@
                     Margin="{StaticResource LargeLeftRightMargin}"
                     x:FieldModifier="Public"
                     Style="{ThemeResource HeaderTextBlockStyle}" />
+                <Border
+                    x:Name="PlaybackInfoBorder"
+                    x:FieldModifier="Public"
+                    Grid.Row="3"
+                    Margin="{StaticResource LargeLeftRightMargin}"
+                    Padding="12"
+                    HorizontalAlignment="Left"
+                    Background="{StaticResource PlayerControlsScrimBrush}"
+                    CornerRadius="8"
+                    Visibility="Collapsed">
+                    <ScrollViewer MaxHeight="520" MinWidth="360">
+                        <StackPanel x:Name="PlaybackInfoPanel" Spacing="12" />
+                    </ScrollViewer>
+                </Border>
             </Grid>
 
 
@@ -358,6 +373,13 @@
                     <AppBarSeparator />
 
                     <AppBarButton
+                        x:Name="PlaybackInfoButton"
+                        Click="PlaybackInfoButton_Click"
+                        Icon="{ui:FontIcon Glyph=&#xE946;}"
+                        IsTabStop="False"
+                        Label="Playback info" />
+
+                    <AppBarButton
                         x:Name="CastButton"
                         Click="CastButton_Click"
                         Icon="{ui:FontIcon Glyph=&#xEC16;}"
@@ -366,7 +388,7 @@
 
                     <AppBarButton
                         x:Name="CCSelectionButton"
-                        Flyout="{x:Bind c:Converters.GetSubtitlesFlyout(Player, Playlist.SelectedItem.Media), Mode=OneWay}"
+                        Flyout="{x:Bind c:Converters.GetSubtitlesFlyout(Player, Playlist.SelectedItem.Media, Playlist.SelectedItem), Mode=OneWay}"
                         Icon="{ui:FontIcon Glyph=&#xED1E;}"
                         IsTabStop="False"
                         Label="Subtitles"

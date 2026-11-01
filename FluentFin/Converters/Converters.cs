@@ -142,7 +142,7 @@ public static class Converters
 		return flyout;
 	}
 
-	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response)
+	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response, FluentFin.ViewModels.PlaylistItem? playlistItem = null)
 	{
 		var subtitles = response?.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
 		var defaultSubtitleIndex = response?.MediaSourceInfo.DefaultSubtitleStreamIndex;
@@ -167,6 +167,7 @@ public static class Converters
 				logger.LogInformation("Menu: opening subtitle {Stream} as external file with {Player}, playMethod={PlayMethod}, url={Url}",
 					stream.Describe(), mp.GetType().Name, response.PlayMethod, SubtitleStreamDiagnostics.WithoutToken(url));
 				mp.OpenExternalSubtitleTrack(url);
+				RememberSubtitle(playlistItem, stream.Index);
 			}
 			else
 			{
@@ -182,6 +183,7 @@ public static class Converters
 				try
 				{
 					mp.OpenInternalSubtitleTrack(trackIndex, subtitleIndex);
+					RememberSubtitle(playlistItem, trackIndex);
 				}
 				catch (Exception ex)
 				{
@@ -194,6 +196,7 @@ public static class Converters
 		{
 			App.GetService<ILoggerFactory>().CreateLogger("FluentFin.Subtitles").LogInformation("Menu: subtitles disabled with {Player}", mp.GetType().Name);
 			mp.DisableSubtitles();
+			RememberSubtitle(playlistItem, PlaybackSelection.NoSubtitles);
 		});
 
 		const string groupName = "Subtitles";
@@ -222,6 +225,15 @@ public static class Converters
 		}
 
 		return flyout;
+	}
+
+	/// <summary>Keeps the subtitle picked in the player menu, so that the playback info shows the active one.</summary>
+	private static void RememberSubtitle(FluentFin.ViewModels.PlaylistItem? item, int? subtitleStreamIndex)
+	{
+		if (item is not null && subtitleStreamIndex is not null)
+		{
+			item.Selection = new PlaybackSelection(item.Selection?.AudioStreamIndex, subtitleStreamIndex);
+		}
 	}
 
 	public static string AccessScheduleToString(AccessSchedule schedule)
