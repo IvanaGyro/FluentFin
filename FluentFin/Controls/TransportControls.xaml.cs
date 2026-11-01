@@ -4,6 +4,7 @@ using System.Windows.Input;
 using CommunityToolkit.WinUI;
 using FluentFin.Core;
 using FluentFin.Core.Contracts.Services;
+using FluentFin.Core.Services;
 using FluentFin.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -144,6 +145,46 @@ public sealed partial class TransportControls : UserControl
 	private static string TimeRemaining(TimeSpan currentTime, TimeSpan duration)
 	{
 		return (duration - currentTime).ToString("hh\\:mm\\:ss");
+	}
+
+	private void PlaybackInfoFlyout_Opening(object sender, object e)
+	{
+		PlaybackInfoPanel.Children.Clear();
+
+		var item = Playlist?.SelectedItem;
+		if (item?.Media is not { } media)
+		{
+			PlaybackInfoPanel.Children.Add(new TextBlock { Text = "No media is playing." });
+			return;
+		}
+
+		var audio = item.Selection?.AudioStreamIndex ?? media.MediaSourceInfo.DefaultAudioStreamIndex;
+		var subtitle = item.Selection?.SubtitleStreamIndex ?? media.MediaSourceInfo.DefaultSubtitleStreamIndex;
+
+		foreach (var section in PlaybackInfo.Build(media, audio, subtitle, Player?.GetType().Name.Replace("MediaPlayerController", "")))
+		{
+			var panel = new StackPanel { Spacing = 2 };
+			panel.Children.Add(new TextBlock { Text = section.Title, Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"] });
+
+			var grid = new Grid { ColumnSpacing = 16, RowSpacing = 2 };
+			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+			grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+			for (var i = 0; i < section.Rows.Count; i++)
+			{
+				grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+				var label = new TextBlock { Text = section.Rows[i].Label, Opacity = 0.7 };
+				var value = new TextBlock { Text = section.Rows[i].Value, TextWrapping = TextWrapping.WrapWholeWords, IsTextSelectionEnabled = true };
+				Grid.SetRow(label, i);
+				Grid.SetRow(value, i);
+				Grid.SetColumn(value, 1);
+				grid.Children.Add(label);
+				grid.Children.Add(value);
+			}
+
+			panel.Children.Add(grid);
+			PlaybackInfoPanel.Children.Add(panel);
+		}
 	}
 
 	private async void SkipBackwardButton_Click(object sender, RoutedEventArgs e) => await SkipBackward();
