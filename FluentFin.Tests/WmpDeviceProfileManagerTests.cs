@@ -117,6 +117,17 @@ public sealed class WmpDeviceProfileManagerTests(ITestOutputHelper output)
 	}
 
 	[Fact]
+	public void SecondaryAudio_IsDirectPlayed()
+	{
+		// the player switches to the chosen audio track itself, so the server must not transcode for a track that is not the first
+		var profile = WmpDeviceProfileManager.Build(Capabilities());
+
+		Assert.DoesNotContain(
+			profile.CodecProfiles!.SelectMany(p => (p.Conditions ?? []).Concat(p.ApplyConditions ?? [])),
+			c => c.Property == ProfileCondition_Property.IsSecondaryAudio);
+	}
+
+	[Fact]
 	public void DirectPlay_HasNoBitrateLimit()
 	{
 		var profile = WmpDeviceProfileManager.Build(Capabilities());
