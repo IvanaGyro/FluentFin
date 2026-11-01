@@ -145,34 +145,28 @@ public partial class LibraryViewModel : ObservableObject, INavigationAware
 	{
 		IsLoading = true;
 
-		try
+		var result = await JellyfinClient.GetItems(dto);
+
+		if (result is null or { Items: null })
 		{
-			var result = await JellyfinClient.GetItems(dto);
-
-			if (result is null or { Items: null })
-			{
-				return;
-			}
-
-			_itemsCache.AddOrUpdate(result.Items.Select(BaseItemViewModel.FromDto));
-
-			// Only libraries have filters; a plain folder opened from a card returns none.
-			var filters = await JellyfinClient.GetFilters(dto);
-
-			if (filters is null)
-			{
-				return;
-			}
-
-			TagsSource = filters.Tags?.ToList() ?? [];
-			GenresSource = filters.Genres?.ToList() ?? [];
-			OfficialRatingsSource = filters.OfficialRatings?.ToList() ?? [];
-			YearsSource = filters.Years?.Where(x => x.HasValue).Select(x => x!.Value.ToString()).ToList() ?? [];
+			return;
 		}
-		finally
+
+		_itemsCache.AddOrUpdate(result.Items.Select(BaseItemViewModel.FromDto));
+
+		var filters = await JellyfinClient.GetFilters(dto);
+
+		if (filters is null)
 		{
-			IsLoading = false;
+			return;
 		}
+
+		TagsSource = filters.Tags?.ToList() ?? [];
+		GenresSource = filters.Genres?.ToList() ?? [];
+		OfficialRatingsSource = filters.OfficialRatings?.ToList() ?? [];
+		YearsSource = filters.Years?.Where(x => x.HasValue).Select(x => x!.Value.ToString()).ToList() ?? [];
+
+		IsLoading = false;
 	}
 }
 

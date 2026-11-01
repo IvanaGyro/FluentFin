@@ -16,6 +16,7 @@ public partial class JellyfinClient
 				var query = x.QueryParameters;
 				query.SortBy = [ItemSortBy.SortName];
 				query.SortOrder = [SortOrder.Ascending];
+				query.Recursive = recursive;
 				query.Fields = [ItemFields.PrimaryImageAspectRatio, ItemFields.DateCreated, ItemFields.Overview, ItemFields.Tags, ItemFields.Genres];
 				query.ImageTypeLimit = 1;
 				query.EnableImageTypes = [ImageType.Primary, ImageType.Backdrop, ImageType.Banner, ImageType.Thumb];
@@ -26,10 +27,6 @@ public partial class JellyfinClient
 					BaseItemDto_CollectionType.Tvshows => [BaseItemKind.Series],
 					_ => null
 				};
-				// A movie or show can sit inside a plain folder, for example a folder holding
-				// several unrelated videos. List these libraries recursively, like Jellyfin Web,
-				// so those items show up instead of being hidden inside the folder.
-				query.Recursive = recursive || query.IncludeItemTypes is not null;
 			});
 		}
 		catch (Exception ex)
