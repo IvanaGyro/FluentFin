@@ -726,18 +726,9 @@ public sealed class WmpDeviceProfileManager
 				Conditions = aacDecoderConditions,
 			});
 
-		bool supportsSecondaryAudio = false; // TODO
-		if (!supportsSecondaryAudio)
-		{
-			aacCodecProfileConditions.Add(
-				new ProfileCondition
-				{
-					Condition = ProfileCondition_Condition.Equals,
-					Property = ProfileCondition_Property.IsSecondaryAudio,
-					Value = "false",
-					IsRequired = false
-				});
-		}
+		// Audio streams other than the first one (IsSecondaryAudio) are direct played: unlike a browser, which plays only the default
+		// audio track of a file and so needs the server to transcode the chosen one, the Windows media player switches to the chosen
+		// track itself (MediaPlaybackItem.AudioTracks, see WindowsMediaPlayerController).
 
 		if (aacCodecProfileConditions.Count > 0)
 		{
@@ -772,18 +763,6 @@ public sealed class WmpDeviceProfileManager
             });
         }
         */
-
-		if (!supportsSecondaryAudio)
-		{
-			globalVideoAudioCodecProfileConditions.Add(
-				new ProfileCondition
-				{
-					Condition = ProfileCondition_Condition.Equals,
-					Property = ProfileCondition_Property.IsSecondaryAudio,
-					Value = "false",
-					IsRequired = false
-				});
-		}
 
 		if (globalAudioCodecProfileConditions.Count > 0)
 		{
