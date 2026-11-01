@@ -142,7 +142,7 @@ public static class Converters
 		return flyout;
 	}
 
-	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response, FluentFin.ViewModels.PlaylistItem? item = null)
+	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response, FluentFin.ViewModels.PlaylistItem? playlistItem = null)
 	{
 		var subtitles = response?.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
 		var defaultSubtitleIndex = response?.MediaSourceInfo.DefaultSubtitleStreamIndex;
@@ -167,7 +167,7 @@ public static class Converters
 				logger.LogInformation("Menu: opening subtitle {Stream} as external file with {Player}, playMethod={PlayMethod}, url={Url}",
 					stream.Describe(), mp.GetType().Name, response.PlayMethod, SubtitleStreamDiagnostics.WithoutToken(url));
 				mp.OpenExternalSubtitleTrack(url);
-				RememberSubtitle(item, stream.Index);
+				RememberSubtitle(playlistItem, stream.Index);
 			}
 			else
 			{
@@ -183,7 +183,7 @@ public static class Converters
 				try
 				{
 					mp.OpenInternalSubtitleTrack(trackIndex, subtitleIndex);
-					RememberSubtitle(item, trackIndex);
+					RememberSubtitle(playlistItem, trackIndex);
 				}
 				catch (Exception ex)
 				{
@@ -196,7 +196,7 @@ public static class Converters
 		{
 			App.GetService<ILoggerFactory>().CreateLogger("FluentFin.Subtitles").LogInformation("Menu: subtitles disabled with {Player}", mp.GetType().Name);
 			mp.DisableSubtitles();
-			RememberSubtitle(item, PlaybackSelection.NoSubtitles);
+			RememberSubtitle(playlistItem, PlaybackSelection.NoSubtitles);
 		});
 
 		const string groupName = "Subtitles";
