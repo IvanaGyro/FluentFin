@@ -1,3 +1,4 @@
+using Flyleaf.FFmpeg;
 using FluentFin.MediaPlayers;
 using FlyleafLib;
 using FlyleafLib.MediaPlayer;
@@ -37,6 +38,38 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 
 		Assert.True(avfilter is null, $"avfilter is not loaded, Flyleaf decodes no audio: {avfilter?.Message}");
 		Assert.True(swscale is null, $"swscale is not loaded: {swscale?.Message}");
+	}
+
+	/// <summary>
+	/// Flyleaf.FFmpeg.ABI mirrors the structs of FFmpeg 9.0, and Flyleaf's audio decoder writes min_samples/max_samples
+	/// into avfilter's internal FilterLink, which starts with the public AVFilterLink. An FFmpeg whose AVFilterLink is
+	/// laid out differently (master builds after 9.0 added chroma_location) gets those writes in the wrong fields and
+	/// crashes on the first audio frame (issue 23, arm64 builds with FFmpeg master). This checks the layout of the
+	/// FFmpeg the app ships against the ABI, on any CPU.
+	/// </summary>
+	[Fact]
+	public unsafe void FFmpeg_HasTheFilterLinkLayoutFlyleafWritesTo()
+	{
+		StartEngine();
+
+		var graph = Raw.avfilter_graph_alloc();
+		try
+		{
+			AVFilterContext* source = null;
+			AVFilterContext* sink = null;
+			Assert.Equal(0, Raw.avfilter_graph_create_filter(ref source, Raw.avfilter_get_by_name("abuffer"), "in", "channel_layout=stereo:sample_fmt=flt:sample_rate=48000:time_base=1/48000", null, graph));
+			Assert.Equal(0, Raw.avfilter_graph_create_filter(ref sink, Raw.avfilter_get_by_name("abuffersink"), "out", null, null, graph));
+			Assert.Equal(0, Raw.avfilter_link(source, 0, sink, 0));
+			Assert.Equal(0, Raw.avfilter_graph_config(graph, null));
+
+			var link = (FilterLink*)sink->inputs[0];
+			Assert.True(link->pub.dst == sink, "AVFilterLink.dst is not the sink: the public AVFilterLink differs from the ABI");
+			Assert.True(link->graph == graph, $"FilterLink.graph is not the graph: the loaded avfilter {Raw.avfilter_version() >> 16}.{(Raw.avfilter_version() >> 8) & 255} lays out AVFilterLink differently from the ABI Flyleaf is built for (FFmpeg 9.0), and Flyleaf's writes to FilterLink corrupt it");
+		}
+		finally
+		{
+			Raw.avfilter_graph_free(ref graph);
+		}
 	}
 
 	[Theory]
@@ -108,7 +141,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 
 		for (var i = 0; i < 8; i++)
 		{
-			using var player = Guarded(new Player());
+			using var player = new Player();
 			var opened = player.Open(Media);
 			Assert.True(opened.Success, opened.Error);
 			player.SeekAccurate(6000);
@@ -138,7 +171,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 	public void Playback_Advances(string file)
 	{
 		StartEngine();
-		using var player = Guarded(new Player());
+		using var player = new Player();
 		player.Config.Player.AutoPlay = false;
 		var opened = player.Open(Path.Combine(AppContext.BaseDirectory, "Media", file));
 		Assert.True(opened.Success, opened.Error);
@@ -154,20 +187,13 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Assert.True(Engine.Audio.Failed || seconds > 1, $"{seconds:0.00}s of audio reached the audio device in 2s of playback");
 	}
 
-	/// <summary>The player with the audio decoder thread guard of the app (<see cref="FlyleafAudioThread.Guard"/>).</summary>
-	private static Player Guarded(Player player)
-	{
-		FlyleafAudioThread.Guard(player);
-		return player;
-	}
-
 	/// <summary>Opens the media paused, with the given audio track (index into <see cref="Audio.Streams"/>).</summary>
 	private Player Open(int track)
 	{
 		StartEngine();
 		Assert.False(Engine.Audio.Failed, "Flyleaf found no audio device. The workflows install a virtual one; locally, enable a playback device.");
 
-		var player = Guarded(new Player());
+		var player = new Player();
 		player.Config.Player.AutoPlay = false;
 		var opened = player.Open(Media);
 		Assert.True(opened.Success, opened.Error);
@@ -197,7 +223,6 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 	private void Report(Player player, string what, double seconds)
 	{
 		var decoder = player.decoder.AudioDecoder;
-		output.WriteLine($"{what}: audio decoder thread floating point control word before/after the device setup {FlyleafAudioThread.LastDeviceSetup?.Before:X}/{FlyleafAudioThread.LastDeviceSetup?.After:X}");
 		output.WriteLine($"{what}: {seconds:0.00}s of audio delivered, status={player.Status}, position={TimeSpan.FromTicks(player.CurTime)}, " +
 			$"decoder={decoder.Status} {decoder.SampleRate}Hz {decoder.SampleBytes}B/sample, device='{player.Audio.Device}', volume={player.Audio.Volume}, mute={player.Audio.Mute}");
 		foreach (var line in PlayerLog(player).Split('\n').Where(x => x.Contains("| Error") || x.Contains("| Warn") || x.Contains("Audio initialized")).Take(10))

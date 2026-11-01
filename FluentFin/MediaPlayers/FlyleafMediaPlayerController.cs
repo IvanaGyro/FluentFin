@@ -22,7 +22,6 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 	{
 		_audiosFlyoutButton = audioTracksButton;
 		_mp.Config.Player.KeyBindings.RemoveAll();
-		FlyleafAudioThread.Guard(_mp);
 		host.Player = _mp;
 		_mp.PlaybackStopped += (_, e) => LastError = e.Error?.ToString() ?? LastError;
 

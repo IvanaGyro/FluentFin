@@ -49,9 +49,9 @@ jobs:
     name: 'Flyleaf playback tests (arm64)'
     runs-on: windows-11-arm
     env:
-        # the arm64 FFmpeg of the release build (ci_deploy.yml)
-        FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-N-126342-gf88b741dbf-winarm64-gpl-shared.zip
-        FFMPEG_ARM64_SHA256: d01a01d2e447dbcd0abc143c1c74d53317dfe20f08dbb2eba0712b62c083ec93
+        # the arm64 FFmpeg of the release build (ci_deploy.yml): the FFmpeg 9.0 release branch, the ABI Flyleaf is built for
+        FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-01-12-49/ffmpeg-n9.0.2-42-gd7643a0fe3-winarm64-gpl-shared-9.0.zip
+        FFMPEG_ARM64_SHA256: 233083531d51a4bf53fe5c1a58266ccdee90c25aee113c58f49ca0769dec7ef7
     steps:
     -   name: 'Checkout'
         uses: actions/checkout@v4
@@ -93,3 +93,19 @@ jobs:
 
     -   name: 'Test Flyleaf playback'
         run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=ARM64 -p:Platforms=ARM64 -p:RuntimeIdentifier=win-arm64 --filter "FullyQualifiedName~FlyleafAudioPlaybackTests" --blame-crash --logger "console;verbosity=normal"
+
+    # TEMPORARY (issue 23): shows that the FilterLink layout test catches an FFmpeg master build like the one that
+    # crashed the arm64 test builds; remove before merging.
+    -   name: 'Check that the FilterLink layout test fails with FFmpeg master'
+        shell: pwsh
+        run: |
+            Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-01-12-49/ffmpeg-N-128273-g836436cfb9-winarm64-gpl-shared.zip -OutFile ffmpeg-master.zip
+            Expand-Archive ffmpeg-master.zip -DestinationPath ffmpeg-master
+            $dir = Get-ChildItem FluentFin.Tests\bin -Recurse -Directory -Filter FFMpeg | Select-Object -First 1
+            foreach ($dll in Get-ChildItem $dir.FullName -Filter *.dll) {
+                Copy-Item (Get-ChildItem ffmpeg-master -Recurse -Filter $dll.Name | Select-Object -First 1).FullName $dll.FullName -Force
+            }
+            dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=ARM64 -p:Platforms=ARM64 -p:RuntimeIdentifier=win-arm64 --no-build --filter "FullyQualifiedName~FFmpeg_HasTheFilterLinkLayoutFlyleafWritesTo" --logger "console;verbosity=normal"
+            if ($LASTEXITCODE -eq 0) { throw 'The FilterLink layout test passed with FFmpeg master' }
+            Write-Host "The FilterLink layout test failed with FFmpeg master, as it should"
+            exit 0

@@ -13,9 +13,11 @@ env:
   FFMPEG_PATH: 'Installer\FFmpeg'
   PUBLISH_FOLDER: 'FluentFin\bin\publish'
   PUBLISH_FOLDER_ARM64: 'FluentFin\bin\publish-arm64'
-  # pinned BtbN autobuild, the closest to the checked-in x64 DLLs (avcodec-63); bump both together
-  FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-N-126342-gf88b741dbf-winarm64-gpl-shared.zip
-  FFMPEG_ARM64_SHA256: d01a01d2e447dbcd0abc143c1c74d53317dfe20f08dbb2eba0712b62c083ec93
+  # pinned BtbN build of the FFmpeg 9.0 release branch: Flyleaf.FFmpeg.ABI 9.0.0 mirrors the 9.0 structs, and
+  # Flyleaf writes into avfilter's links by that layout. Newer master builds inserted AVFilterLink fields (chroma_location)
+  # and crash Flyleaf's audio decoder on the first frame (issue 23). Keep the DLL names in step with the x64 ones.
+  FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-01-12-49/ffmpeg-n9.0.2-42-gd7643a0fe3-winarm64-gpl-shared-9.0.zip
+  FFMPEG_ARM64_SHA256: 233083531d51a4bf53fe5c1a58266ccdee90c25aee113c58f49ca0769dec7ef7
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
 
 jobs:
