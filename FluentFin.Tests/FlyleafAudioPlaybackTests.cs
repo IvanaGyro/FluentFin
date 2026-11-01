@@ -147,6 +147,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Thread.Sleep(TimeSpan.FromSeconds(1));
 		var seconds = PlayAndMeasure(player, TimeSpan.FromSeconds(2));
 
+		Assert.False(string.IsNullOrWhiteSpace(PlayerLog(player)), "Flyleaf's log (FlyleafLog.WriteTo) got no lines of the player");
 		Report(player, $"{file} (video {player.decoder.VideoStream?.Codec} {player.decoder.VideoStream?.PixelFormatStr} accelerated={player.decoder.VideoDecoder.VideoAccelerated}, audio device found: {!Engine.Audio.Failed})", seconds);
 		AssertNoErrors(player);
 		Assert.True(player.CurTime >= TimeSpan.FromSeconds(2).Ticks, $"playback did not advance, the position is {TimeSpan.FromTicks(player.CurTime)}");
@@ -213,10 +214,11 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 				return;
 			}
 
-			var config = FlyleafEngineConfig.Create(FFmpegFolder(), LogFile,
-				Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info);
+			var config = FlyleafEngineConfig.Create(FFmpegFolder());
 			config.UIRefresh = false; // no UI to refresh in the tests
 			Engine.Start(config);
+			// the way the app writes Flyleaf's log
+			FlyleafLog.WriteTo(LogFile, Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info);
 		}
 	}
 
