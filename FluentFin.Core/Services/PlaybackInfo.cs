@@ -28,7 +28,7 @@ public static class PlaybackInfo
 
 		var playback = new List<PlaybackInfoRow>();
 		Add(playback, "Player", playerName);
-		Add(playback, "Play method", DescribePlayMethod(media.PlayMethod));
+		Add(playback, "Play method", DescribePlayMethod(media.PlayMethod, transcoding));
 		Add(playback, "Protocol", isTranscode ? source.TranscodingSubProtocol?.ToString() : "http");
 		Add(playback, "Stream type", isTranscode ? "Transcode" : media.PlayMethod.ToString());
 		Add(playback, "Container", source.Container);
@@ -140,10 +140,16 @@ public static class PlaybackInfo
 		_ => string.Create(CultureInfo.InvariantCulture, $"{bytes.Value / (double)(1L << 20):0.#} MiB"),
 	};
 
-	private static string DescribePlayMethod(PlaybackProgressInfo_PlayMethod method) => method switch
+	/// <summary>
+	/// The client asks for either a direct play or a transcoding url. When the server session shows the video is not re-encoded,
+	/// the "transcode" only repackages the video, which is a direct stream.
+	/// </summary>
+	public static string DescribePlayMethod(PlaybackProgressInfo_PlayMethod method, TranscodingInfo? transcoding = null) => method switch
 	{
 		PlaybackProgressInfo_PlayMethod.DirectPlay => "Direct play",
 		PlaybackProgressInfo_PlayMethod.DirectStream => "Direct stream",
+		PlaybackProgressInfo_PlayMethod.Transcode when transcoding?.IsVideoDirect == true =>
+			transcoding.IsAudioDirect == false ? "Direct stream (audio transcoded)" : "Direct stream",
 		PlaybackProgressInfo_PlayMethod.Transcode => "Transcoding",
 		_ => method.ToString(),
 	};

@@ -75,6 +75,20 @@ public sealed class PlaybackInfoTests
 		Assert.Contains(rows, x => x is { Label: "Resolution", Value: "1280x720" });
 	}
 
+	[Theory]
+	[InlineData(PlaybackProgressInfo_PlayMethod.DirectPlay, null, null, "Direct play")]
+	[InlineData(PlaybackProgressInfo_PlayMethod.Transcode, null, null, "Transcoding")]
+	[InlineData(PlaybackProgressInfo_PlayMethod.Transcode, false, false, "Transcoding")]
+	[InlineData(PlaybackProgressInfo_PlayMethod.Transcode, false, true, "Transcoding")]
+	[InlineData(PlaybackProgressInfo_PlayMethod.Transcode, true, true, "Direct stream")]
+	[InlineData(PlaybackProgressInfo_PlayMethod.Transcode, true, false, "Direct stream (audio transcoded)")]
+	public void DescribePlayMethod_TellsDirectStreamFromTranscode(PlaybackProgressInfo_PlayMethod method, bool? videoDirect, bool? audioDirect, string expected)
+	{
+		var live = videoDirect is null ? null : new TranscodingInfo { IsVideoDirect = videoDirect, IsAudioDirect = audioDirect };
+
+		Assert.Equal(expected, PlaybackInfo.DescribePlayMethod(method, live));
+	}
+
 	[Fact]
 	public void Build_ForDirectPlay_HasNoTranscodingSection()
 	{
