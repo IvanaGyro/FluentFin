@@ -286,7 +286,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var success = MediaPlayer.Play(mediaResponse.Uri, audioIndex ?? 0, audioOrdinal is >= 0 ? audioOrdinal : null);
 		if (!success)
 		{
-			logger.LogError("Unable to open media from {URL}", SubtitleStreamDiagnostics.WithoutToken(mediaResponse.Uri.ToString()));
+			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
 			await StopPlayback();
 			return;
 		}
@@ -465,6 +465,24 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		await playbackSessions.ReportProgressAsync(session, GetPlaybackState(MediaPlayer));
 	}
 
+	private string DescribePlayback()
+	{
+		var item = Playlist.SelectedItem;
+		var media = item?.Media;
+
+		// the players repeat the url in their error messages
+		return ($"Item: {item?.Dto.Name} [{item?.Dto.Id}], " +
+			$"PlaySessionId: {media?.PlaybackSessionId}, " +
+			$"MediaSourceId: {media?.MediaSourceId}, " +
+			$"PlayMethod: {media?.PlayMethod}, " +
+			$"Container: {media?.MediaSourceInfo.Container}, " +
+			$"Player: {MediaPlayerType}, " +
+			$"PlayerState: {MediaPlayer?.State}, " +
+			$"PlayerError: {MediaPlayer?.LastError}, " +
+			$"Position: {MediaPlayer?.Position}, " +
+			$"Url: {media?.Uri}").MaskApiKey();
+	}
+
 	private void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
@@ -487,7 +505,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		mp.Stopped.ObserveOn(RxSchedulers.MainThreadScheduler).Where(_ => mp.State is MediaPlayerState.Stopped).Subscribe(async _ => await StopPlayback(stopPlayer: false));
 		mp.Errored.Select(_ => Volatile.Read(ref _session)).ObserveOn(RxSchedulers.MainThreadScheduler).Where(IsCurrentSession).Subscribe(async _ =>
 		{
-			logger.LogError("An error occurred while playing media");
+			// described before the session is stopped, the backends do not report what went wrong
+			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
 			await StopPlayback();
 		});
 		mp.PositionChanged
