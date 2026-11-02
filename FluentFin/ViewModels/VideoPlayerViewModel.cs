@@ -390,6 +390,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		// clean up the previous session first, whether or not the new media can be loaded
 		await StopPlayback();
 
+		// the teardown takes a round trip to the server: another load may have started and finished meanwhile, the player is its
+		if (version != _loadVersion)
+		{
+			return false;
+		}
+
 		// the stopped player reports zero while the server answers: the time bar stays where the item was
 		MediaPlayer.HoldPosition(resumeTicks is { } held ? TimeSpan.FromTicks(held) : null);
 
