@@ -32,7 +32,8 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		// shared, so that the position held is dropped once whoever listens has seen the player at it
 		_positionChanged = Observable.Merge(
 				_mp.WhenAnyValue(x => x.CurTime).Select(x => new TimeSpan(x)).Where(_seek.ShouldReport),
-				_seekPosition)
+				_seekPosition,
+				_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 			.Publish()
 			.RefCount();
 		_mp.PlaybackStopped += (_, e) => LastError = e.Error?.ToString() ?? LastError;

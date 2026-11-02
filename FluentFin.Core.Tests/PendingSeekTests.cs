@@ -68,4 +68,26 @@ public sealed class PendingSeekTests
 		Assert.True(seek.ShouldReport(TimeSpan.Zero));
 		Assert.Null(seek.Target);
 	}
+
+	[Fact]
+	public async Task TheHeldPosition_IsRepeated_WhileItIsHeld()
+	{
+		var seek = new PendingSeek();
+		var seen = new List<TimeSpan>();
+		using var subscription = seek.Reminders(TimeSpan.FromMilliseconds(20)).Subscribe(x => { lock (seen) { seen.Add(x); } });
+
+		await Task.Delay(100);
+		lock (seen) { Assert.Empty(seen); }
+
+		seek.Set(TimeSpan.FromMinutes(8));
+		await Task.Delay(200);
+		seek.Clear();
+		int count;
+		lock (seen) { count = seen.Count; }
+		Assert.True(count >= 2, $"{count} reminders");
+		Assert.All(seen.ToArray(), x => Assert.Equal(TimeSpan.FromMinutes(8), x));
+
+		await Task.Delay(100);
+		lock (seen) { Assert.Equal(count, seen.Count); }
+	}
 }

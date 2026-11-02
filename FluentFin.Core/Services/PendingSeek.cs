@@ -1,3 +1,5 @@
+using System.Reactive.Linq;
+
 namespace FluentFin.Core.Services;
 
 /// <summary>
@@ -36,6 +38,13 @@ public sealed class PendingSeek(Func<DateTimeOffset>? clock = null)
 	{
 		lock (_lock) { _target = null; }
 	}
+
+	/// <summary>
+	/// The target again and again while there is one. A time bar that was given the position before it knew the length of the new media
+	/// holds the value clamped to the old length (zero), and the player gives it nothing new while the position is held.
+	/// </summary>
+	public IObservable<TimeSpan> Reminders(TimeSpan period) =>
+		Observable.Interval(period).Select(_ => Target).Where(x => x is not null).Select(x => x!.Value);
 
 	/// <summary>Whether the player is off the target, in either direction, and has to be asked to seek again.</summary>
 	public bool NeedsSeek(TimeSpan reported)

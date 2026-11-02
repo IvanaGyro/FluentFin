@@ -32,7 +32,8 @@ namespace FluentFin.MediaPlayers
 			// shared, so that the seek is applied once per event whoever listens
 			_positionChanged = Observable.Merge(
 					_mp.Events().TimeChanged.Select(e => TimeSpan.FromMilliseconds(e.Time)).Do(ApplyPendingSeek).Where(_seek.ShouldReport),
-					_seekPosition)
+					_seekPosition,
+					_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 				.Publish()
 				.RefCount();
 

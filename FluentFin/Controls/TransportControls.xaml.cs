@@ -70,6 +70,13 @@ public sealed partial class TransportControls : UserControl
 		{
 			tc.TimeSlider.Maximum = e.TotalMilliseconds;
 			duration = e;
+
+			// a value given before the length was known is clamped to the old length, the position is given again
+			try
+			{
+				tc.TimeSlider.Value = Math.Min(tc.TimeSlider.Maximum, controller.Position.TotalMilliseconds);
+			}
+			catch { }
 		});
 		controller.PositionChanged.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
 		{

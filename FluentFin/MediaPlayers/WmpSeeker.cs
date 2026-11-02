@@ -22,7 +22,8 @@ internal sealed class WmpSeeker
 		_mp = mp;
 		PositionChanged = Observable.Merge(
 				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Do(ApplyPendingSeek).Where(_seek.ShouldReport),
-				_shown)
+				_shown,
+				_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 			.Publish()
 			.RefCount();
 	}
