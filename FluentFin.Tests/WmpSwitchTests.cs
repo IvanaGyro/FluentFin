@@ -31,7 +31,9 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 	{
 		VideoDecoders = new HashSet<Guid>([WmpSubtypes.H264, WmpSubtypes.Mpeg2, WmpSubtypes.Vc1]),
 		AudioDecoders = new HashSet<Guid>(InBoxAudio),
-		HardwareDecoders = [],
+		HardwareDecoders = new Dictionary<HardwareDecoder, VideoSize>(),
+		IsHdrDisplay = false,
+		CanPlayDolbyVision = false,
 		AudioChannelCount = 2,
 	});
 
