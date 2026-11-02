@@ -145,7 +145,8 @@ public static class Converters
 	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response, FluentFin.ViewModels.PlaylistItem? playlistItem = null)
 	{
 		var subtitles = response?.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
-		var defaultSubtitleIndex = response?.MediaSourceInfo.DefaultSubtitleStreamIndex;
+		// what the page picked wins over the server's default, and -1 means "None"
+		var defaultSubtitleIndex = playlistItem?.Selection?.SubtitleStreamIndex ?? response?.MediaSourceInfo.DefaultSubtitleStreamIndex;
 
 		if (subtitles.Count == 0)
 		{
@@ -206,7 +207,7 @@ public static class Converters
 			Text = "None",
 			GroupName = groupName,
 			Command = disableSubtitles,
-			IsChecked = response?.MediaSourceInfo.DefaultSubtitleStreamIndex is null
+			IsChecked = defaultSubtitleIndex is null or PlaybackSelection.NoSubtitles
 		});
 
 		foreach (var item in subtitles)
