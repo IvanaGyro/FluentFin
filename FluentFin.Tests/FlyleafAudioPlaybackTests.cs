@@ -13,6 +13,7 @@ namespace FluentFin.Tests;
 /// AC-3 5.1, AAC 5.1 and E-AC-3 stereo audio). The playback tests need an audio device; the workflows install a
 /// virtual one on the runner.
 /// </summary>
+[Collection(AudioDevice.Name)]
 public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 {
 	private static readonly object EngineLock = new();

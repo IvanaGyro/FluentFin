@@ -11,6 +11,7 @@ namespace FluentFin.Tests;
 /// WinRT MediaPlayer the way WindowsMediaPlayerController does and read the peak meter of the default audio device, so
 /// what reaches the device is measured, not what the player claims. The workflows install a virtual audio device.
 /// </summary>
+[Collection(AudioDevice.Name)]
 public sealed class WmpAudioPlaybackTests(ITestOutputHelper output)
 {
 	private static readonly string Media = Path.Combine(AppContext.BaseDirectory, "Media", "audio-tracks.mkv");
