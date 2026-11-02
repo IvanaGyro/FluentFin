@@ -288,7 +288,5 @@ public partial class App : Application
 	{
 		var location = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly()!.Location)!, "FFMpeg");
 		FlyleafLib.Engine.Start(MediaPlayers.FlyleafEngineConfig.Create(location ?? "FFmpeg"));
-		// Flyleaf's own log (audio device, decoders, errors) next to the app's log
-		MediaPlayers.FlyleafLog.WriteTo(Path.Combine(GetService<Core.KnownFolders>().Logs, "flyleaf.log"), FlyleafLib.LogLevel.Info);
 	}
 }

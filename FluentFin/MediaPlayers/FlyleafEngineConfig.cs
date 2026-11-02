@@ -13,13 +13,12 @@ public static class FlyleafEngineConfig
 	/// and Flyleaf then plays the video without any sound and without logging an error (issue 23).
 	/// <see cref="Flyleaf.FFmpeg.LoadProfile.Filters"/> loads both and leaves out avdevice, which only capture devices need.
 	/// </remarks>
-	public static EngineConfig Create(string ffmpegPath, string? logOutput = null, LogLevel logLevel = LogLevel.Quiet) => new()
+	public static EngineConfig Create(string ffmpegPath) => new()
 	{
 		FFmpegLoadProfile = Flyleaf.FFmpeg.LoadProfile.Filters,
 		FFmpegPath = ffmpegPath,
 		FFmpegLogLevel = Flyleaf.FFmpeg.LogLevel.Quiet,
-		LogOutput = logOutput,
-		LogLevel = logLevel,
+		LogLevel = LogLevel.Quiet,
 		UIRefresh = true,    // Required for Activity, BufferedDuration, Stats in combination with Config.Player.Stats = true
 		UIRefreshInterval = 250,      // How often (in ms) to notify the UI
 	};

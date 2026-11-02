@@ -1,8 +1,8 @@
 using FlyleafLib;
 
-namespace FluentFin.MediaPlayers;
+namespace FluentFin.Tests;
 
-/// <summary>Writes Flyleaf's log to a file.</summary>
+/// <summary>Writes Flyleaf's log to a file, for the tests to check what Flyleaf did (the app does not log Flyleaf).</summary>
 public static class FlyleafLog
 {
 	private static readonly object Lock = new();

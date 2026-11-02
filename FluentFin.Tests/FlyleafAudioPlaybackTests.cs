@@ -180,7 +180,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Thread.Sleep(TimeSpan.FromSeconds(1));
 		var seconds = PlayAndMeasure(player, TimeSpan.FromSeconds(2));
 
-		Assert.False(string.IsNullOrWhiteSpace(PlayerLog(player)), "Flyleaf's log (FlyleafLog.WriteTo) got no lines of the player");
+		Assert.False(string.IsNullOrWhiteSpace(PlayerLog(player)), "Flyleaf's log got no lines of the player");
 		Report(player, $"{file} (video {player.decoder.VideoStream?.Codec} {player.decoder.VideoStream?.PixelFormatStr} accelerated={player.decoder.VideoDecoder.VideoAccelerated}, audio device found: {!Engine.Audio.Failed})", seconds);
 		AssertNoErrors(player);
 		Assert.True(player.CurTime >= TimeSpan.FromSeconds(2).Ticks, $"playback did not advance, the position is {TimeSpan.FromTicks(player.CurTime)}");
