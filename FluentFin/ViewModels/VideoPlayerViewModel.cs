@@ -290,11 +290,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		// the request failed, the stream can be picked again
 		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
 		{
+			// the resume state is kept for the retry: the player is stopped, it has no position to give any more
 			item.Selection = previousSelection;
-			if (ReferenceEquals(_audioSwitch, state))
-			{
-				_audioSwitch = null;
-			}
 		}
 	}
 
