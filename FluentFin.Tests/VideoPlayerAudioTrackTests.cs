@@ -1,3 +1,4 @@
+using FluentFin.Core.Contracts.Services;
 using FluentFin.ViewModels;
 using Jellyfin.Sdk.Generated.Models;
 
