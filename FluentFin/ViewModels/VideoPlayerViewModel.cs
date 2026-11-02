@@ -299,6 +299,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			_ = OpenSubtitlesWhenReady(MediaPlayer, selectedItem, mediaResponse, subtitleStream);
 		}
+		else if (selection?.SubtitleStreamIndex == PlaybackSelection.NoSubtitles)
+		{
+			logger.LogInformation("Subtitles were set to None on the page, disabling the subtitles the player picks by itself");
+			_ = DisableSubtitlesWhenReady(MediaPlayer, selectedItem, mediaResponse, version);
+		}
 		else
 		{
 			logger.LogInformation("No subtitle opened at start: wanted stream index {Index} (selection={Selection})", subtitleIndex, selection?.SubtitleStreamIndex);
@@ -336,6 +341,42 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		OpenSubtitles(mp, response, stream);
+	}
+
+	/// <summary>
+	/// The players turn on a subtitle track by themselves once they know the tracks of the file, which is some time after opening
+	/// the media, so "None" has to be applied again after the tracks have been loaded.
+	/// </summary>
+	internal async Task DisableSubtitlesWhenReady(IMediaPlayerController mp, PlaylistItem item, MediaResponse response, int version)
+	{
+		// another item has been started, or the user has picked a subtitle in the player menu in the meantime
+		bool Superseded() => version != _loadVersion || item.Selection?.SubtitleStreamIndex != PlaybackSelection.NoSubtitles;
+
+		try
+		{
+			mp.DisableSubtitles();
+
+			var hasEmbedded = response.MediaSourceInfo.MediaStreams?.Any(x => x.Type == MediaStream_Type.Subtitle && x.IsExternal is false) ?? false;
+			for (var attempt = 0; hasEmbedded && attempt < 40 && mp.SubtitleTrackCount <= 0; attempt++)
+			{
+				await Task.Delay(TimeSpan.FromMilliseconds(250));
+
+				if (Superseded())
+				{
+					return;
+				}
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(500));
+			if (!Superseded())
+			{
+				mp.DisableSubtitles();
+			}
+		}
+		catch (Exception ex)
+		{
+			logger.LogWarning(ex, "Unable to disable subtitles with {Player}", mp.GetType().Name);
+		}
 	}
 
 	private void OpenSubtitles(IMediaPlayerController mp, MediaResponse response, MediaStream stream)
