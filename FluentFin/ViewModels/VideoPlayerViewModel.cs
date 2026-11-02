@@ -244,9 +244,6 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		await LoadSelectedItem();
 	}
 
-	/// <summary>Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</summary>
-	private long? _resumeTicks;
-
 	/// <summary>
 	/// Asks the server for the item again with the audio stream picked in the menu while transcoding, which plays it directly
 	/// if the stream allows it, and continues at the current position.
@@ -258,12 +255,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		_resumeTicks = GetKnownPosition();
+		// the position and the paused state belong to this load only, another item selected meanwhile starts from its own
+		var resumeTicks = GetKnownPosition();
+		var wasPaused = MediaPlayer.State == MediaPlayerState.Paused;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
 		try
 		{
-			await LoadSelectedItem();
+			await LoadSelectedItem(resumeTicks, wasPaused);
 		}
 		catch (Exception ex)
 		{
@@ -271,7 +270,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 	}
 
-	private async Task LoadSelectedItem()
+	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
+	/// <param name="startPaused">Whether to pause again once loaded, for the same reload.</param>
+	private async Task LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
 	{
 		if (MediaPlayer is null)
 		{
@@ -329,11 +330,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		PlayMethod = mediaResponse.PlayMethod;
 
-		var resumeTicks = _resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
-		_resumeTicks = null;
-		if (resumeTicks is { } ticks)
+		if ((resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks) is { } ticks)
 		{
 			MediaPlayer.SeekTo(TimeSpan.FromTicks(ticks));
+		}
+
+		if (startPaused)
+		{
+			MediaPlayer.Pause();
 		}
 
 		if (mediaResponse.MediaSourceInfo.MediaStreams?.FirstOrDefault(x => x.Type == MediaStream_Type.Subtitle && x.Index == subtitleIndex) is { } subtitleStream)
