@@ -86,6 +86,17 @@ internal sealed class WmpSeeker
 		PlayIfWaiting();
 	}
 
+	/// <summary>
+	/// The media is open: the position is set first and then <paramref name="afterPosition"/> runs (the audio track of the item is
+	/// selected). A track selected before the position restarts the playback from the start of the file and the item does not resume
+	/// where it was (WmpSeekTests).
+	/// </summary>
+	public void OnMediaOpened(Action afterPosition)
+	{
+		NotifyOpened();
+		afterPosition();
+	}
+
 	/// <summary>The app plays or pauses by itself, the player does not play on its own once it is at the position.</summary>
 	public void CancelPlayWhenSeeked() => _playWhenSeeked = false;
 

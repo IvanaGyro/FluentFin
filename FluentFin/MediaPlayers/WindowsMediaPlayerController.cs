@@ -53,10 +53,7 @@ namespace FluentFin.MediaPlayers
 				{
 					_opened = true;
 
-					// The position first, then the track: a track selected before the position is set restarts the playback from the
-					// start of the file (WmpSeekTests), and the item would not resume where it was.
-					_seeker.NotifyOpened();
-					SelectWantedAudioTrack("media opened");
+					_seeker.OnMediaOpened(() => SelectWantedAudioTrack("media opened"));
 				});
 			};
 			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}", s.PlaybackState);

@@ -62,14 +62,55 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 	}
 
 	/// <summary>
-	/// What the app does to resume an item that has several audio tracks (a direct play): the controller opens the file, the seek waits
-	/// for the media, and when it is open the audio track of the item is selected and the position is set. Both orders of the two:
-	/// the position the player really plays from, and where it is after the seconds that follow.
+	/// What the app does to resume an item that has several audio tracks (a direct play), with the order of the controller: the position
+	/// the player really plays from, and where it is after the seconds that follow.
 	/// </summary>
-	[Theory]
-	[InlineData(true)]
-	[InlineData(false)]
-	public async Task Resuming_AnItemWithAudioTracks_PlaysFromTheResumePosition(bool selectTrackFirst)
+	[Fact]
+	public async Task Resuming_AnItemWithAudioTracks_PlaysFromTheResumePosition()
+	{
+		var (played, position, selected) = await OpenAndResume(Target, trackFirst: false);
+
+		output.WriteLine($"controller order: position={position:g}, selected={selected}, played: {string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0")))}");
+		Assert.True(played.All(x => x >= Target - TimeSpan.FromSeconds(1)), "the player played from " + string.Join(", ", played.Where(x => x < Target - TimeSpan.FromSeconds(1))));
+		Assert.True(position >= Target - TimeSpan.FromSeconds(1), $"the player is at {position}, the resume position was {Target}");
+		Assert.Equal(2, selected);
+	}
+
+	/// <summary>The order the controller had before: the track first. Reported, not asserted, it is what the platform does.</summary>
+	[Fact]
+	public async Task Baseline_ATrackSelectedBeforeThePosition_RestartsThePlayback()
+	{
+		var (played, position, _) = await OpenAndResume(Target, trackFirst: true);
+
+		output.WriteLine($"track first: position={position:g}, played: {string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0")))}");
+	}
+
+	/// <summary>
+	/// The loop of the report: play an item, leave, play it again. What the app reports to the server when it leaves is the position of
+	/// the player; the server keeps it and the next playback resumes there. Three playbacks in a row, each from where the last one was left.
+	/// </summary>
+	[Fact]
+	public async Task TheLastPosition_IsRemembered_WhenTheItemIsPlayedAgain()
+	{
+		var server = TimeSpan.Zero;
+		var positions = new List<TimeSpan>();
+
+		for (var playback = 1; playback <= 3; playback++)
+		{
+			var (_, left, _) = await OpenAndResume(server, trackFirst: false, listen: TimeSpan.FromSeconds(2.5));
+			positions.Add(left);
+
+			// the report of the app when it leaves, the server keeps it
+			Assert.True(left > server, $"playback {playback} started from {server} and was left at {left}");
+			server = left;
+		}
+
+		output.WriteLine("left at: " + string.Join(", ", positions.Select(x => x.TotalSeconds.ToString("0.0"))));
+		Assert.True(positions[2] > positions[1] && positions[1] > positions[0], "the positions did not go on: " + string.Join(", ", positions));
+	}
+
+	/// <summary>Opens the file as the controller does and resumes at <paramref name="resumeAt"/>; returns what was played, where the player is when it is left, and the selected track.</summary>
+	private async Task<(List<TimeSpan> Played, TimeSpan Position, int Selected)> OpenAndResume(TimeSpan resumeAt, bool trackFirst, TimeSpan? listen = null)
 	{
 		var media = new Uri(Path.Combine(AppContext.BaseDirectory, "Media", "audio-tracks.mkv"));
 		using var player = new MediaPlayer { AutoPlay = false };
@@ -86,34 +127,30 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		var item = new MediaPlaybackItem(MediaSource.CreateFromUri(media));
 		player.MediaOpened += (_, _) =>
 		{
-			if (selectTrackFirst)
+			if (trackFirst)
 			{
 				item.AudioTracks.SelectedIndex = 2;
 				seeker.NotifyOpened();
 			}
 			else
 			{
-				seeker.NotifyOpened();
-				item.AudioTracks.SelectedIndex = 2;
+				seeker.OnMediaOpened(() => item.AudioTracks.SelectedIndex = 2);
 			}
 		};
 
 		player.Source = item;
 		player.Play();
 		seeker.PlayRequested = true;
-		seeker.SeekTo(Target);
-
-		await Task.Delay(TimeSpan.FromSeconds(3));
-
-		string text;
-		lock (played) { text = string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0"))); }
-		output.WriteLine($"selectTrackFirst={selectTrackFirst}: state={player.PlaybackSession.PlaybackState}, position={player.PlaybackSession.Position:g}, selected={item.AudioTracks.SelectedIndex}, played: {text}");
-		lock (played)
+		if (resumeAt > TimeSpan.Zero)
 		{
-			Assert.True(played.All(x => x >= Target - TimeSpan.FromSeconds(1)), $"selectTrackFirst={selectTrackFirst}: the player played from {string.Join(", ", played.Where(x => x < Target - TimeSpan.FromSeconds(1)))}");
+			seeker.SeekTo(resumeAt);
 		}
 
-		Assert.True(player.PlaybackSession.Position >= Target - TimeSpan.FromSeconds(1), $"selectTrackFirst={selectTrackFirst}: the player is at {player.PlaybackSession.Position}, the resume position was {Target}");
+		await Task.Delay(listen ?? TimeSpan.FromSeconds(3));
+
+		// what the app reports when it leaves: the position of the player, while it plays
+		var position = seeker.Position;
+		lock (played) { return ([.. played], position, item.AudioTracks.SelectedIndex); }
 	}
 
 	/// <summary>
