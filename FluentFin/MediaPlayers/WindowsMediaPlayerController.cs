@@ -31,11 +31,13 @@ namespace FluentFin.MediaPlayers
 		private Windows.Media.Playback.MediaPlaybackItem? _mediaItem;
 		private int? _wantedAudioOrdinal;
 		private readonly Button _audioTracksButton;
+		private readonly WmpSeeker _seeker;
 		private readonly ILogger _logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
 
 		public WindowsMediaPlayerController(MediaPlayerElement element, Button audioTracksButton)
 		{
 			_audioTracksButton = audioTracksButton;
+			_seeker = new WmpSeeker(_mp);
 			element.AreTransportControlsEnabled = false;
 			element.SetMediaPlayer(_mp);
 			_mp.MediaFailed += (_, e) =>
@@ -46,7 +48,11 @@ namespace FluentFin.MediaPlayers
 			_mp.MediaOpened += (_, _) =>
 			{
 				_logger.LogInformation("Media opened: duration={Duration}, volume={Volume}, muted={Muted}", _mp.SafeGetValue(m => m.NaturalDuration, TimeSpan.Zero), Volume, IsMuted);
-				_audioTracksButton.DispatcherQueue.TryEnqueue(() => SelectWantedAudioTrack("media opened"));
+				_audioTracksButton.DispatcherQueue.TryEnqueue(() =>
+				{
+					SelectWantedAudioTrack("media opened");
+					_seeker.NotifyOpened();
+				});
 			};
 			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}", s.PlaybackState);
 		}
@@ -54,7 +60,7 @@ namespace FluentFin.MediaPlayers
 		public string? LastError { get; private set; }
 
 		public MediaPlayerState State => ConvertState(_mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed));
-		public TimeSpan Position => _mp.SafeGetValue(mp => mp.Position, TimeSpan.Zero);
+		public TimeSpan Position => _seeker.Position;
 		public bool IsPlaying => _mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed) is Windows.Media.Playback.MediaPlayerState.Playing;
 		public bool IsMuted => _mp.SafeGetValue(mp => mp.IsMuted, false);
 		public int? SubtitleTrackIndex => null;
@@ -88,7 +94,7 @@ namespace FluentFin.MediaPlayers
 
 
 		public IObservable<TimeSpan> DurationChanged => _mp.SafeGetValue(mp => mp.PlaybackSession, null)?.Events().NaturalDurationChanged.Select(_ => _mp.SafeGetValue(mp => mp.NaturalDuration, TimeSpan.Zero)) ?? Observable.Empty<TimeSpan>();
-		public IObservable<TimeSpan> PositionChanged => _mp.SafeGetValue(mp => mp.PlaybackSession, null)?.Events().PositionChanged.Select(_ => _mp.SafeGetValue(mp => mp.Position, TimeSpan.Zero)) ?? Observable.Empty<TimeSpan>();
+		public IObservable<TimeSpan> PositionChanged => _seeker.PositionChanged;
 		public IObservable<Unit> Playing => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Playing).Select(_ => Unit.Default);
 		public IObservable<Unit> Paused => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Paused).Select(_ => Unit.Default);
 		public IObservable<Unit> Ended => _mp.Events().MediaEnded.Select(_ => Unit.Default);
@@ -198,6 +204,7 @@ namespace FluentFin.MediaPlayers
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
 			_wantedAudioOrdinal = audioTrackOrdinal;
+			_seeker.Reset();
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
 			var source = MediaSource.CreateFromUri(uri);
@@ -260,14 +267,7 @@ namespace FluentFin.MediaPlayers
 			OpenAudioTrack(tracks[index].Id);
 		}
 
-		public void SeekTo(TimeSpan timeSpan)
-		{
-			try
-			{
-				_mp.Position = timeSpan;
-			}
-			catch { }
-		}
+		public void SeekTo(TimeSpan timeSpan) => _seeker.SeekTo(timeSpan);
 
 		/// <summary>
 		/// Unlike <see cref="Pause"/>, releases the media source so that the network stream is closed.
@@ -275,6 +275,7 @@ namespace FluentFin.MediaPlayers
 		public void Stop()
 		{
 			_logger.LogInformation("Stopping, releasing the media source");
+			_seeker.Reset();
 			try
 			{
 				_mp.Pause();
