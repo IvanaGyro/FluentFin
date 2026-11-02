@@ -1,4 +1,5 @@
 ﻿using System.Reactive.Disposables;
+using System.Globalization;
 using System.Reactive.Disposables.Fluent;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
@@ -454,8 +455,25 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	internal static List<AudioTrack> BuildSourceAudioTracks(MediaSourceInfo source) =>
 		source.MediaStreams?
 			.Where(x => x.Type == MediaStream_Type.Audio && x.Index is not null)
-			.Select(x => new AudioTrack(x.Index!.Value, x.Language, x.DisplayTitle ?? x.Codec))
+			.Select(x => new AudioTrack(x.Index!.Value, LanguageName(x.Language), x.DisplayTitle ?? x.Codec))
 			.ToList() ?? [];
+
+	/// <summary>
+	/// The players name the language of a track ("Chinese") while the server only has its ISO code ("zho"), the menu shows the
+	/// name in both cases. A code that is not known is kept.
+	/// </summary>
+	internal static string? LanguageName(string? code)
+	{
+		if (string.IsNullOrWhiteSpace(code))
+		{
+			return code;
+		}
+
+		var culture = CultureInfo.GetCultures(CultureTypes.NeutralCultures)
+			.FirstOrDefault(x => x.ThreeLetterISOLanguageName.Equals(code, StringComparison.OrdinalIgnoreCase)
+				|| x.TwoLetterISOLanguageName.Equals(code, StringComparison.OrdinalIgnoreCase));
+		return culture?.EnglishName ?? code;
+	}
 
 	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
 	{

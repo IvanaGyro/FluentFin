@@ -54,4 +54,14 @@ public sealed class VideoPlayerAudioTrackTests
 
 		Assert.Equal(Enumerable.Range(1, 10), tracks.Select(x => x.Id));
 	}
+
+	[Theory]
+	[InlineData("zho", "Chinese")]
+	[InlineData("eng", "English")]
+	[InlineData("xxx", "xxx")]
+	[InlineData(null, null)]
+	public void TranscodeMenu_NamesTheLanguageLikeThePlayersDo(string? code, string? expected)
+	{
+		Assert.Equal(expected, VideoPlayerViewModel.LanguageName(code));
+	}
 }
