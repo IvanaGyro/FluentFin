@@ -116,6 +116,39 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		Assert.True(player.PlaybackSession.Position >= Target - TimeSpan.FromSeconds(1), $"selectTrackFirst={selectTrackFirst}: the player is at {player.PlaybackSession.Position}, the resume position was {Target}");
 	}
 
+	/// <summary>
+	/// The in-player switch of the audio track while the item plays (the menu, for a direct play): the position must go on, not go back.
+	/// </summary>
+	[Fact]
+	public async Task SwitchingTheAudioTrack_WhilePlaying_KeepsThePosition()
+	{
+		var media = new Uri(Path.Combine(AppContext.BaseDirectory, "Media", "audio-tracks.mkv"));
+		using var player = new MediaPlayer { AutoPlay = false };
+		var item = new MediaPlaybackItem(MediaSource.CreateFromUri(media));
+		var opened = new TaskCompletionSource();
+		player.MediaOpened += (_, _) => opened.TrySetResult();
+		player.Source = item;
+		player.Play();
+		await Task.WhenAny(opened.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+
+		await Task.Delay(TimeSpan.FromSeconds(3));
+		var before = player.PlaybackSession.Position;
+
+		var after = new List<TimeSpan>();
+		player.PlaybackSession.PositionChanged += (s, _) => { lock (after) { after.Add(s.Position); } };
+		item.AudioTracks.SelectedIndex = 2;
+		await Task.Delay(TimeSpan.FromSeconds(2));
+
+		string text;
+		lock (after) { text = string.Join(", ", after.Select(x => x.TotalSeconds.ToString("0.0"))); }
+		output.WriteLine($"switch: before={before.TotalSeconds:0.0}, after: {text}");
+		lock (after)
+		{
+			Assert.NotEmpty(after);
+			Assert.True(after.All(x => x >= before - TimeSpan.FromSeconds(1)), $"the position was {before} before the switch, then {string.Join(", ", after.Where(x => x < before - TimeSpan.FromSeconds(1)))}");
+		}
+	}
+
 	/// <summary>A pause of the user is kept when the seek has to wait for the media to open.</summary>
 	[Fact]
 	public async Task APausedPlayer_StaysPaused_WhenTheSeekWaitsForTheMediaToOpen()
