@@ -302,7 +302,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		else if (selection?.SubtitleStreamIndex == PlaybackSelection.NoSubtitles)
 		{
 			logger.LogInformation("Subtitles were set to None on the page, disabling the subtitles the player picks by itself");
-			_ = DisableSubtitlesWhenReady(MediaPlayer, mediaResponse, version);
+			_ = DisableSubtitlesWhenReady(MediaPlayer, selectedItem, mediaResponse, version);
 		}
 		else
 		{
@@ -347,8 +347,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// The players turn on a subtitle track by themselves once they know the tracks of the file, which is some time after opening
 	/// the media, so "None" has to be applied again after the tracks have been loaded.
 	/// </summary>
-	internal async Task DisableSubtitlesWhenReady(IMediaPlayerController mp, MediaResponse response, int version)
+	internal async Task DisableSubtitlesWhenReady(IMediaPlayerController mp, PlaylistItem item, MediaResponse response, int version)
 	{
+		// another item has been started, or the user has picked a subtitle in the player menu in the meantime
+		bool Superseded() => version != _loadVersion || item.Selection?.SubtitleStreamIndex != PlaybackSelection.NoSubtitles;
+
 		try
 		{
 			mp.DisableSubtitles();
@@ -358,14 +361,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			{
 				await Task.Delay(TimeSpan.FromMilliseconds(250));
 
-				if (version != _loadVersion)
+				if (Superseded())
 				{
 					return;
 				}
 			}
 
 			await Task.Delay(TimeSpan.FromMilliseconds(500));
-			if (version == _loadVersion)
+			if (!Superseded())
 			{
 				mp.DisableSubtitles();
 			}
