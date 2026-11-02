@@ -69,6 +69,23 @@ public sealed class PendingSeekTests
 		Assert.Null(seek.Target);
 	}
 
+	/// <summary>Timers on a busy runner are late: wait for the condition, with room, instead of for a time.</summary>
+	private static async Task<bool> WaitFor(Func<bool> condition)
+	{
+		var end = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+		while (DateTime.UtcNow < end)
+		{
+			if (condition())
+			{
+				return true;
+			}
+
+			await Task.Delay(10);
+		}
+
+		return condition();
+	}
+
 	[Fact]
 	public async Task TheHeldPosition_IsRepeated_WhileItIsHeld()
 	{
@@ -76,19 +93,24 @@ public sealed class PendingSeekTests
 		var seen = new List<TimeSpan>();
 		using var subscription = seek.Reminders(TimeSpan.FromMilliseconds(20)).Subscribe(x => { lock (seen) { seen.Add(x); } });
 
-		await Task.Delay(100);
+		// nothing is held: no reminders
+		await Task.Delay(150);
 		lock (seen) { Assert.Empty(seen); }
 
 		seek.Set(TimeSpan.FromMinutes(8));
-		await Task.Delay(200);
+		Assert.True(await WaitFor(() => { lock (seen) { return seen.Count >= 2; } }), "no reminders while the position is held");
 		seek.Clear();
+
+		// the timer is gone with the hold: what was in flight is delivered, then nothing
+		await Task.Delay(150);
 		int count;
 		lock (seen) { count = seen.Count; }
-		Assert.True(count >= 2, $"{count} reminders");
-		Assert.All(seen.ToArray(), x => Assert.Equal(TimeSpan.FromMinutes(8), x));
-
-		await Task.Delay(100);
-		lock (seen) { Assert.Equal(count, seen.Count); }
+		await Task.Delay(150);
+		lock (seen)
+		{
+			Assert.Equal(count, seen.Count);
+			Assert.All(seen, x => Assert.Equal(TimeSpan.FromMinutes(8), x));
+		}
 	}
 
 	[Fact]
@@ -100,14 +122,15 @@ public sealed class PendingSeekTests
 		using var subscription = seek.Reminders(TimeSpan.FromMilliseconds(20)).Subscribe(x => { lock (seen) { seen.Add(x); } });
 
 		seek.Set(TimeSpan.FromMinutes(8));
-		await Task.Delay(100);
-		now += PendingSeek.Timeout + TimeSpan.FromSeconds(1);
-		await Task.Delay(100);
+		Assert.True(await WaitFor(() => { lock (seen) { return seen.Count >= 1; } }), "no reminders while the position is held");
 
-		Assert.Null(seek.Target);
+		now += PendingSeek.Timeout + TimeSpan.FromSeconds(1);
+		Assert.True(await WaitFor(() => seek.Target is null), "the hold did not end");
+
+		await Task.Delay(150);
 		int count;
 		lock (seen) { count = seen.Count; }
-		await Task.Delay(100);
+		await Task.Delay(150);
 		lock (seen) { Assert.Equal(count, seen.Count); }
 	}
 }
