@@ -124,4 +124,20 @@ public sealed class VideoPlayerAudioTrackTests
 		// a newer pick, also for the same stream, is in flight: this one was superseded
 		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, false, 1, 3));
 	}
+
+	[Fact]
+	public void AFailedSwitch_RestoresTheAudio_AndKeepsTheSubtitleOfTheMeantime()
+	{
+		var previous = new PlaybackSelection(3, 7);
+		var current = new PlaybackSelection(4, PlaybackSelection.NoSubtitles);
+
+		Assert.Equal(new PlaybackSelection(3, PlaybackSelection.NoSubtitles), VideoPlayerViewModel.RestoreAudio(current, previous));
+	}
+
+	[Fact]
+	public void AFailedSwitch_WithoutAnyPreviousChoice_GoesBackToTheServerDefault()
+	{
+		Assert.Null(VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, null), null));
+		Assert.Equal(new PlaybackSelection(null, 9), VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, 9), null));
+	}
 }

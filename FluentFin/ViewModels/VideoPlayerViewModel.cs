@@ -299,7 +299,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
 		{
 			// the resume state is kept for the retry: the player is stopped, it has no position to give any more
-			item.Selection = previousSelection;
+			// only the audio is undone: the subtitle may have been changed in the menu while the request was pending
+			item.Selection = RestoreAudio(item.Selection, previousSelection);
 		}
 	}
 
@@ -340,6 +341,17 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		MediaPlayer.OpenAudioTrack(tracks[index].Id);
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 		return true;
+	}
+
+	/// <summary>The current selection with the audio stream of the previous one, the subtitle of the current one is kept.</summary>
+	internal static PlaybackSelection? RestoreAudio(PlaybackSelection? current, PlaybackSelection? previous)
+	{
+		if (previous is null && current?.SubtitleStreamIndex is null)
+		{
+			return null;
+		}
+
+		return new PlaybackSelection(previous?.AudioStreamIndex, current?.SubtitleStreamIndex ?? previous?.SubtitleStreamIndex);
 	}
 
 	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused, PlaybackSelection? PreviousSelection);
