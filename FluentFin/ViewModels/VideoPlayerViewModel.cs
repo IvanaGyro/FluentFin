@@ -241,6 +241,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		_audioSwitch = null;
 		await LoadSelectedItem();
 	}
 
@@ -255,20 +256,28 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		// the position and the paused state belong to this load only, another item selected meanwhile starts from its own
-		var resumeTicks = GetKnownPosition();
-		var wasPaused = MediaPlayer.State == MediaPlayerState.Paused;
+		// A second pick while the first is still loading finds the player stopped and has no position, it continues the first switch
+		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
+		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
+			? pending
+			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused);
+		_audioSwitch = state;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
 		try
 		{
-			await LoadSelectedItem(resumeTicks, wasPaused);
+			await LoadSelectedItem(state.Ticks, state.Paused);
 		}
 		catch (Exception ex)
 		{
+			_audioSwitch = null;
 			logger.LogError(ex, "Unable to switch to audio stream {Index}", streamIndex);
 		}
 	}
+
+	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused);
+
+	private AudioSwitchState? _audioSwitch;
 
 	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
 	/// <param name="startPaused">Whether to pause again once loaded, for the same reload.</param>
@@ -338,6 +347,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		if (startPaused)
 		{
 			MediaPlayer.Pause();
+		}
+
+		// loaded, the next audio switch starts from the position of this one
+		if (_audioSwitch is { } done && ReferenceEquals(done.Item, selectedItem))
+		{
+			_audioSwitch = null;
 		}
 
 		if (mediaResponse.MediaSourceInfo.MediaStreams?.FirstOrDefault(x => x.Type == MediaStream_Type.Subtitle && x.Index == subtitleIndex) is { } subtitleStream)
