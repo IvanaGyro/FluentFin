@@ -249,9 +249,11 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 
 			var config = FlyleafEngineConfig.Create(FFmpegFolder());
 			config.UIRefresh = false; // no UI to refresh in the tests
+			// Flyleaf's log, to check the errors Flyleaf swallows; written line by line instead of in batches of 20
+			config.LogOutput = LogFile;
+			config.LogLevel = Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info;
+			config.LogCachedLines = 0;
 			Engine.Start(config);
-			// the way the app writes Flyleaf's log
-			FlyleafLog.WriteTo(LogFile, Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info);
 		}
 	}
 
