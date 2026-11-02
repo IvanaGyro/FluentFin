@@ -81,7 +81,15 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 	[InlineData("A1", "D1")]
 	[InlineData("D1", "A2")]
 	[InlineData("D1", "D2")]
-	public async Task SwitchingTheTrack_NeverShowsTheStartOfTheMedia_AndKeepsThePosition(string fromName, string toName)
+	public Task SwitchingTheTrack_NeverShowsTheStartOfTheMedia_AndKeepsThePosition(string fromName, string toName) => Switching(fromName, toName, TimeSpan.Zero);
+
+	/// <summary>The server needs seconds for every segment of the transcode (7 s for the playlist and 13 s of buffering were seen on a 4K video).</summary>
+	[Theory]
+	[InlineData("A1", "D1")]
+	[InlineData("D1", "D2")]
+	public Task SwitchingToATranscode_WithASlowServer_NeverShowsTheStartOfTheMedia(string fromName, string toName) => Switching(fromName, toName, TimeSpan.FromSeconds(5));
+
+	private async Task Switching(string fromName, string toName, TimeSpan segmentDelay)
 	{
 		var from = ByName(fromName);
 		var to = ByName(toName);
@@ -91,6 +99,7 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 		await session.Open(from, TimeSpan.Zero);
 		await Task.Delay(TimeSpan.FromSeconds(3.5));
 		var at = session.Seeker.Position;
+		server.SegmentDelay = segmentDelay;
 		output.WriteLine($"{from.Name} -> {to.Name}: leaving {from.Name} at {at.TotalSeconds:0.0}s");
 
 		session.StartRecording();
@@ -98,8 +107,9 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 		await Task.Delay(TimeSpan.FromSeconds(4));
 		var peak = await AudioMeter.Peak(TimeSpan.FromSeconds(1.5));
 
-		session.Report($"{from.Name} -> {to.Name}", at, peak);
-		session.AssertGood($"{from.Name} -> {to.Name}", at, peak);
+		var name = $"{from.Name} -> {to.Name}{(segmentDelay > TimeSpan.Zero ? " (slow server)" : "")}";
+		session.Report(name, at, peak);
+		session.AssertGood(name, at, peak);
 	}
 
 	/// <summary>Leaving the item and playing it again, the first thing of the playback: resumed at the position it was left at.</summary>
@@ -190,7 +200,7 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 			}
 
 			// loaded: where the item is going to play
-			await WaitFor(() => Seeker.IsVideoVisible, TimeSpan.FromSeconds(20));
+			await WaitFor(() => Seeker.IsVideoVisible, TimeSpan.FromSeconds(60));
 		}
 
 		public async Task Switch(Track from, Track to, TimeSpan at)

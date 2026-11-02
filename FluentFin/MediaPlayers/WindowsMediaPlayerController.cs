@@ -41,7 +41,11 @@ namespace FluentFin.MediaPlayers
 			_seeker = new WmpSeeker(_mp);
 
 			// black while the media loads: the player shows the start of the media before it is where the item resumes
-			_seeker.VideoVisibleChanged.Subscribe(visible => element.DispatcherQueue.TryEnqueue(() => element.Opacity = visible ? 1 : 0));
+			_seeker.VideoVisibleChanged.Subscribe(visible =>
+			{
+				_logger.LogInformation("Video {State}: position={Position:g}, playback state={PlaybackState}", visible ? "shown" : "hidden", _seeker.Position, _mp.SafeGetValue(m => m.PlaybackSession.PlaybackState, Windows.Media.Playback.MediaPlaybackState.None));
+				element.DispatcherQueue.TryEnqueue(() => element.Opacity = visible ? 1 : 0);
+			});
 			element.AreTransportControlsEnabled = false;
 			element.SetMediaPlayer(_mp);
 			_mp.MediaFailed += (_, e) =>
@@ -59,7 +63,10 @@ namespace FluentFin.MediaPlayers
 					_seeker.OnMediaOpened(() => SelectWantedAudioTrack("media opened"));
 				});
 			};
-			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}", s.PlaybackState);
+			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}, position={Position:g}", s.PlaybackState, s.Position);
+			_mp.PlaybackSession.SeekCompleted += (s, _) => _logger.LogInformation("Seek completed: position={Position:g}", s.Position);
+			_mp.PlaybackSession.BufferingStarted += (s, _) => _logger.LogInformation("Buffering started: position={Position:g}", s.Position);
+			_mp.PlaybackSession.BufferingEnded += (s, _) => _logger.LogInformation("Buffering ended: position={Position:g}", s.Position);
 		}
 
 		public string? LastError { get; private set; }

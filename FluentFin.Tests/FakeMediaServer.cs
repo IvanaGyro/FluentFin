@@ -30,6 +30,9 @@ internal sealed class FakeMediaServer : IDisposable
 	/// <summary>Added to every request.</summary>
 	public TimeSpan Delay { get; set; }
 
+	/// <summary>Added to the requests of the segments of a stream (.ts) on top of <see cref="Delay"/>: a transcode of a big video takes seconds to produce them.</summary>
+	public TimeSpan SegmentDelay { get; set; }
+
 	public Uri Url(string relativePath) => new($"http://localhost:{_port}/{relativePath}");
 
 	private async Task Serve()
@@ -55,6 +58,10 @@ internal sealed class FakeMediaServer : IDisposable
 		try
 		{
 			await Task.Delay(Delay);
+			if (context.Request.Url!.AbsolutePath.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
+			{
+				await Task.Delay(SegmentDelay);
+			}
 
 			var relative = Uri.UnescapeDataString(context.Request.Url!.AbsolutePath.TrimStart('/')).Replace('/', Path.DirectorySeparatorChar);
 			var path = Path.GetFullPath(Path.Combine(_folder, relative));

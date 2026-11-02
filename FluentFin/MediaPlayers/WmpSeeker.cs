@@ -19,15 +19,32 @@ internal sealed class WmpSeeker
 
 	private readonly Subject<bool> _videoVisible = new();
 	private volatile bool _opened;
+	private volatile bool _buffering;
+	private volatile bool _seekRequested;
+	private volatile bool _seekCompleted;
 	private DateTimeOffset _loadingSince;
 
 	/// <summary>How long the video is kept hidden at most: it is shown even if the player never gets where the app wants it.</summary>
-	private static readonly TimeSpan LoadingTimeout = TimeSpan.FromSeconds(15);
+	private static readonly TimeSpan LoadingTimeout = TimeSpan.FromSeconds(75);
 
 	public WmpSeeker(MediaPlayer mp)
 	{
 		_mp = mp;
 		_mp.PlaybackSession.PlaybackStateChanged += (_, _) => EvaluateVideo();
+
+		// The player reports the position that was asked for, and the state Playing, while it still buffers at the new position and
+		// shows the frame it had (the start of the media). The seek is done, and the buffer filled, only when it says so.
+		_mp.PlaybackSession.SeekCompleted += (_, _) =>
+		{
+			_seekCompleted = true;
+			EvaluateVideo();
+		};
+		_mp.PlaybackSession.BufferingStarted += (_, _) => _buffering = true;
+		_mp.PlaybackSession.BufferingEnded += (_, _) =>
+		{
+			_buffering = false;
+			EvaluateVideo();
+		};
 		PositionChanged = Observable.Merge(
 				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Do(ApplyPendingSeek).Do(_ => EvaluateVideo()).Where(_seek.ShouldReport),
 				_shown,
@@ -49,6 +66,9 @@ internal sealed class WmpSeeker
 	public void BeginLoading()
 	{
 		_opened = false;
+		_buffering = false;
+		_seekRequested = false;
+		_seekCompleted = false;
 		_loadingSince = DateTimeOffset.UtcNow;
 		SetVideoVisible(false);
 	}
@@ -73,7 +93,8 @@ internal sealed class WmpSeeker
 
 		var arrived = _seek.ShouldReport(ActualPosition);
 		var playing = _mp.SafeGetValue(mp => mp.PlaybackSession.PlaybackState is MediaPlaybackState.Playing or MediaPlaybackState.Paused, false);
-		if ((_opened && arrived && playing) || DateTimeOffset.UtcNow - _loadingSince > LoadingTimeout)
+		var seeked = !_seekRequested || _seekCompleted;
+		if ((_opened && arrived && playing && !_buffering && seeked) || DateTimeOffset.UtcNow - _loadingSince > LoadingTimeout)
 		{
 			SetVideoVisible(true);
 		}
@@ -107,6 +128,7 @@ internal sealed class WmpSeeker
 		_seek.Set(held);
 		_shown.OnNext(held);
 		BeginLoading();
+		_seekRequested = true;
 	}
 
 	public void SeekTo(TimeSpan time)
@@ -119,6 +141,7 @@ internal sealed class WmpSeeker
 		}
 
 		_seek.Set(time);
+		_seekRequested = true;
 		_shown.OnNext(time);
 
 		// The player started playing the stream from its start, and shows it, while it cannot seek yet. It waits, paused, until the
@@ -211,6 +234,7 @@ internal sealed class WmpSeeker
 
 	private void SetPosition(TimeSpan time)
 	{
+		_seekCompleted = false;
 		try
 		{
 			_mp.PlaybackSession.Position = time;

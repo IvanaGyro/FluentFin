@@ -19,8 +19,11 @@ public sealed class PendingSeek(Func<DateTimeOffset>? clock = null)
 	/// <summary>How close to the target the player has to report to be taken as arrived.</summary>
 	public static readonly TimeSpan Tolerance = TimeSpan.FromSeconds(2);
 
-	/// <summary>How long the player gets to reach the target, after that it reports what it has, the time bar must not stay stuck.</summary>
-	public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
+	/// <summary>
+	/// How long the player gets to reach the target, after that it reports what it has, the time bar must not stay stuck. A transcode
+	/// of a 4K video from a server over the network takes its time: 7 seconds for the playlist and 13 more for the buffer were seen.
+	/// </summary>
+	public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
 	public TimeSpan? Target
 	{
