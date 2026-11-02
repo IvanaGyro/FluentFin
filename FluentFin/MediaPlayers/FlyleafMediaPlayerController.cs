@@ -66,6 +66,8 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 	public IObservable<Unit> MediaLoaded { get; } = Observable.Empty<Unit>();
 
 	public void Dispose() => _mp.Dispose();
+	public SourceAudioMenu? SourceAudioMenu { get; set; }
+
 	public IEnumerable<AudioTrack> GetAudioTracks() => _mp.Audio.Streams.Select(x => new AudioTrack(x.StreamIndex, x.Language.TopEnglishName, x.Title));
 	public void OpenAudioTrack(int index)
 	{

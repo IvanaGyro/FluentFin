@@ -87,6 +87,8 @@ namespace FluentFin.MediaPlayers
 
 		public void Dispose() => _mp.Dispose();
 
+		public SourceAudioMenu? SourceAudioMenu { get; set; }
+
 		public IEnumerable<Core.Contracts.Services.AudioTrack> GetAudioTracks()
 		{
 			if (_mediaItem is null)

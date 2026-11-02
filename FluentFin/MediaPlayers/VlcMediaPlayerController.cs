@@ -105,6 +105,8 @@ namespace FluentFin.MediaPlayers
 		public void Stop() => _mp.Stop();
 		public void SeekTo(TimeSpan time) => _mp.SeekTo(time);
 		public void Dispose() => _mp.Dispose();
+		public SourceAudioMenu? SourceAudioMenu { get; set; }
+
 		public IEnumerable<Core.Contracts.Services.AudioTrack> GetAudioTracks() => _mp.Media?.Tracks.Where(x => x.TrackType == TrackType.Audio).Select(x => new Core.Contracts.Services.AudioTrack(x.Id, x.Language, x.Description)) ?? [];
 
 		public MediaPlayerState State => ConvertState(_mp.State);

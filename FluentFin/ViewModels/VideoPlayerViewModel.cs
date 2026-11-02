@@ -240,6 +240,43 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		await LoadSelectedItem();
+	}
+
+	/// <summary>Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</summary>
+	private long? _resumeTicks;
+
+	/// <summary>
+	/// Asks the server for the item again with the audio stream picked in the menu while transcoding, which plays it directly
+	/// if the stream allows it, and continues at the current position.
+	/// </summary>
+	private async void SwitchAudioStream(int streamIndex)
+	{
+		if (Playlist.SelectedItem is not { } item || MediaPlayer is null)
+		{
+			return;
+		}
+
+		_resumeTicks = GetKnownPosition();
+		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
+
+		try
+		{
+			await LoadSelectedItem();
+		}
+		catch (Exception ex)
+		{
+			logger.LogError(ex, "Unable to switch to audio stream {Index}", streamIndex);
+		}
+	}
+
+	private async Task LoadSelectedItem()
+	{
+		if (MediaPlayer is null)
+		{
+			return;
+		}
+
 		if (Playlist.SelectedItem is not { Dto.Id: not null } selectedItem)
 		{
 			return;
@@ -276,6 +313,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
+		MediaPlayer.SourceAudioMenu = TranscodeAudioMenu(mediaResponse, audioIndex);
 		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
@@ -290,7 +328,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		PlayMethod = mediaResponse.PlayMethod;
 
-		if (selectedItem.Dto.UserData?.PlaybackPositionTicks is { } ticks)
+		var resumeTicks = _resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
+		_resumeTicks = null;
+		if (resumeTicks is { } ticks)
 		{
 			MediaPlayer.SeekTo(TimeSpan.FromTicks(ticks));
 		}
@@ -392,6 +432,30 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		int ordinal = source.MediaStreams?.Where(x => x.Type == MediaStream_Type.Audio).ToList().FindIndex(x => x.Index == index) ?? -1;
 		return ordinal >= 0 ? ordinal : null;
 	}
+
+	/// <summary>The audio streams of the source file for the menu while transcoding, as the player only sees the stream of the transcode.</summary>
+	internal SourceAudioMenu? TranscodeAudioMenu(MediaResponse response, int? audioIndex)
+	{
+		if (response.PlayMethod != PlaybackProgressInfo_PlayMethod.Transcode)
+		{
+			return null;
+		}
+
+		var tracks = BuildSourceAudioTracks(response.MediaSourceInfo);
+		if (tracks.Count < 2)
+		{
+			return null;
+		}
+
+		var selected = audioIndex is { } index && tracks.Any(x => x.Id == index) ? index : tracks[0].Id;
+		return new SourceAudioMenu(tracks, selected, track => SwitchAudioStream(track.Id));
+	}
+
+	internal static List<AudioTrack> BuildSourceAudioTracks(MediaSourceInfo source) =>
+		source.MediaStreams?
+			.Where(x => x.Type == MediaStream_Type.Audio && x.Index is not null)
+			.Select(x => new AudioTrack(x.Index!.Value, x.Language, x.DisplayTitle ?? x.Codec))
+			.ToList() ?? [];
 
 	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
 	{

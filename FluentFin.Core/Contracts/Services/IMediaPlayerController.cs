@@ -15,6 +15,12 @@ public interface IMediaPlayerController : IDisposable
 	void SeekTo(TimeSpan timeSpan);
 	IEnumerable<AudioTrack> GetAudioTracks();
 
+	/// <summary>
+	/// Replaces the audio menu of the player while transcoding, where the player only sees the one stream the server chose
+	/// and not the audio streams of the source file. Null for the tracks of the player itself.
+	/// </summary>
+	SourceAudioMenu? SourceAudioMenu { get; set; }
+
 	MediaPlayerState State { get; }
 	TimeSpan Position { get; }
 	bool IsPlaying { get; }
@@ -59,6 +65,9 @@ public enum MediaPlayerType
 	Flyleaf,
 	WindowsMediaPlayer
 }
+
+/// <summary>The audio streams of the source file, by their stream index, with the one that plays and what to do when another is picked.</summary>
+public record SourceAudioMenu(IReadOnlyList<AudioTrack> Tracks, int SelectedId, Action<AudioTrack> Select);
 
 public record struct AudioTrack(int Id, string? Language, string? Name);
 

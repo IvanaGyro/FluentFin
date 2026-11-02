@@ -46,4 +46,12 @@ public sealed class VideoPlayerAudioTrackTests
 	{
 		Assert.Null(VideoPlayerViewModel.DirectPlayAudioOrdinal(PlaybackProgressInfo_PlayMethod.DirectPlay, Source, audioStreamIndex));
 	}
+
+	[Fact]
+	public void TranscodeMenu_ListsTheAudioStreamsOfTheSourceByStreamIndex()
+	{
+		var tracks = VideoPlayerViewModel.BuildSourceAudioTracks(Source);
+
+		Assert.Equal(Enumerable.Range(1, 10), tracks.Select(x => x.Id));
+	}
 }
