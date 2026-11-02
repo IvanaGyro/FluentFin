@@ -53,7 +53,15 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public MediaPlayerState State => ConvertState(_mp.Status);
 
-	public TimeSpan Position => _seek.Target ?? new(_mp.CurTime);
+	public TimeSpan Position
+	{
+		get
+		{
+			// read when the app leaves the item and reports the position: it must not depend on anyone listening to the position events
+			var actual = new TimeSpan(_mp.CurTime);
+			return _seek.ShouldReport(actual) ? actual : _seek.Target ?? actual;
+		}
+	}
 	public bool IsPlaying => _mp.IsPlaying;
 	public bool IsMuted => _mp.Audio.Mute;
 	public int? SubtitleTrackIndex => _mp.Subtitles.Streams.FirstOrDefault(x => x.Enabled)?.StreamIndex - 1;

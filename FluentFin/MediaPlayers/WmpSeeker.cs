@@ -31,8 +31,18 @@ internal sealed class WmpSeeker
 	/// <summary>Shared, so that the seek is made once per event whoever listens.</summary>
 	public IObservable<TimeSpan> PositionChanged { get; }
 
-	/// <summary>The position to show: the one asked for until the player has reached it.</summary>
-	public TimeSpan Position => _seek.Target ?? ActualPosition;
+	/// <summary>
+	/// The position to show: the one asked for until the player has reached it. It is read when the app leaves the item and reports the
+	/// position to the server, so it must not depend on anyone listening to the position events to learn that the player is there.
+	/// </summary>
+	public TimeSpan Position
+	{
+		get
+		{
+			var actual = ActualPosition;
+			return _seek.ShouldReport(actual) ? actual : _seek.Target ?? actual;
+		}
+	}
 
 	/// <summary>Shows the position until the player is at it, null ends it.</summary>
 	public void Hold(TimeSpan? position)
