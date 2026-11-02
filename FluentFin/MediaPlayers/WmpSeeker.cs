@@ -17,15 +17,66 @@ internal sealed class WmpSeeker
 	private readonly PendingSeek _seek = new();
 	private readonly Subject<TimeSpan> _shown = new();
 
+	private readonly Subject<bool> _videoVisible = new();
+	private volatile bool _opened;
+	private DateTimeOffset _loadingSince;
+
+	/// <summary>How long the video is kept hidden at most: it is shown even if the player never gets where the app wants it.</summary>
+	private static readonly TimeSpan LoadingTimeout = TimeSpan.FromSeconds(15);
+
 	public WmpSeeker(MediaPlayer mp)
 	{
 		_mp = mp;
+		_mp.PlaybackSession.PlaybackStateChanged += (_, _) => EvaluateVideo();
 		PositionChanged = Observable.Merge(
-				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Do(ApplyPendingSeek).Where(_seek.ShouldReport),
+				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Do(ApplyPendingSeek).Do(_ => EvaluateVideo()).Where(_seek.ShouldReport),
 				_shown,
 				_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 			.Publish()
 			.RefCount();
+	}
+
+	/// <summary>
+	/// Whether the video is to be shown. The player shows the first frame of the media (the start of the file or of the stream) as soon
+	/// as it opens it, before the seek to where the item was is made, and the picture flashes back to the start. The video stays hidden
+	/// (black) from the moment the media is loaded until the player is at the position the item resumes at, and playing.
+	/// </summary>
+	public bool IsVideoVisible { get; private set; } = true;
+
+	public IObservable<bool> VideoVisibleChanged => _videoVisible;
+
+	/// <summary>New media is being loaded: its video is hidden until it is where it has to be.</summary>
+	public void BeginLoading()
+	{
+		_opened = false;
+		_loadingSince = DateTimeOffset.UtcNow;
+		SetVideoVisible(false);
+	}
+
+	private void SetVideoVisible(bool visible)
+	{
+		if (IsVideoVisible == visible)
+		{
+			return;
+		}
+
+		IsVideoVisible = visible;
+		_videoVisible.OnNext(visible);
+	}
+
+	private void EvaluateVideo()
+	{
+		if (IsVideoVisible)
+		{
+			return;
+		}
+
+		var arrived = _seek.ShouldReport(ActualPosition);
+		var playing = _mp.SafeGetValue(mp => mp.PlaybackSession.PlaybackState is MediaPlaybackState.Playing or MediaPlaybackState.Paused, false);
+		if ((_opened && arrived && playing) || DateTimeOffset.UtcNow - _loadingSince > LoadingTimeout)
+		{
+			SetVideoVisible(true);
+		}
 	}
 
 	/// <summary>Shared, so that the seek is made once per event whoever listens.</summary>
@@ -55,6 +106,7 @@ internal sealed class WmpSeeker
 
 		_seek.Set(held);
 		_shown.OnNext(held);
+		BeginLoading();
 	}
 
 	public void SeekTo(TimeSpan time)
@@ -94,6 +146,8 @@ internal sealed class WmpSeeker
 		}
 
 		PlayIfWaiting();
+		_opened = true;
+		EvaluateVideo();
 	}
 
 	/// <summary>

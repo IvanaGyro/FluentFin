@@ -46,7 +46,7 @@ jobs:
 
     # what Windows Media Player plays is measured with the peak meter of the device: show the numbers also when it passes
     -   name: 'Show what Windows Media Player plays'
-        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --no-build --filter "FullyQualifiedName~WmpAudioPlaybackTests|FullyQualifiedName~WmpSeekTests" --logger "console;verbosity=detailed"
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --no-build --filter "FullyQualifiedName~WmpAudioPlaybackTests|FullyQualifiedName~WmpSeekTests|FullyQualifiedName~WmpSwitchTests" --logger "console;verbosity=detailed"
 
   # Flyleaf on arm64 runs native arm64 code (FFmpeg, XAudio2, the .NET runtime) that x64 does not: play audio there too.
   flyleaf-arm64:

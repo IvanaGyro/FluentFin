@@ -39,6 +39,9 @@ namespace FluentFin.MediaPlayers
 		{
 			_audioTracksButton = audioTracksButton;
 			_seeker = new WmpSeeker(_mp);
+
+			// black while the media loads: the player shows the start of the media before it is where the item resumes
+			_seeker.VideoVisibleChanged.Subscribe(visible => element.DispatcherQueue.TryEnqueue(() => element.Opacity = visible ? 1 : 0));
 			element.AreTransportControlsEnabled = false;
 			element.SetMediaPlayer(_mp);
 			_mp.MediaFailed += (_, e) =>
@@ -220,6 +223,7 @@ namespace FluentFin.MediaPlayers
 		{
 			_wantedAudioOrdinal = audioTrackOrdinal;
 			_opened = false;
+			_seeker.BeginLoading();
 			_seeker.PlayRequested = true;
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);

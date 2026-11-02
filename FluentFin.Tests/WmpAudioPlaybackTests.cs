@@ -1,4 +1,3 @@
-using NAudio.CoreAudioApi;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Xunit.Abstractions;
@@ -70,7 +69,7 @@ public sealed class WmpAudioPlaybackTests(ITestOutputHelper output)
 					await later(item);
 				}
 
-				var peak = await Peak(TimeSpan.FromSeconds(3));
+				var peak = await AudioMeter.Peak(TimeSpan.FromSeconds(3));
 				var line = $"{name}: peak={peak:0.000}, selected={item.AudioTracks.SelectedIndex} (expected {expectedTrack}), state={player.PlaybackSession.PlaybackState}, position={player.PlaybackSession.Position:g}, decoder of the selected={(item.AudioTracks.SelectedIndex >= 0 ? item.AudioTracks[item.AudioTracks.SelectedIndex].SupportInfo.DecoderStatus.ToString() : "-")}";
 				results.Add(line);
 				output.WriteLine(line);
@@ -139,21 +138,5 @@ public sealed class WmpAudioPlaybackTests(ITestOutputHelper output)
 				results.Add($"  #{i}: {ex.GetType().Name} {ex.Message}");
 			}
 		}
-	}
-
-	/// <summary>The highest value of the peak meter of the default audio device (0 to 1) over the duration.</summary>
-	private static async Task<float> Peak(TimeSpan duration)
-	{
-		using var enumerator = new MMDeviceEnumerator();
-		using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-		var peak = 0f;
-		var end = DateTime.UtcNow + duration;
-		while (DateTime.UtcNow < end)
-		{
-			peak = Math.Max(peak, device.AudioMeterInformation.MasterPeakValue);
-			await Task.Delay(50);
-		}
-
-		return peak;
 	}
 }
