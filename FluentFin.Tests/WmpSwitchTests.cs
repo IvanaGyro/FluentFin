@@ -1,4 +1,7 @@
+using FluentFin.Core.Contracts.Services;
+using FluentFin.Core.Services;
 using FluentFin.MediaPlayers;
+using Jellyfin.Sdk.Generated.Models;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Xunit.Abstractions;
@@ -7,9 +10,11 @@ namespace FluentFin.Tests;
 
 /// <summary>
 /// The switch of the audio track in Windows Media Player, in the four ways it can go, with a server that takes its time:
-/// <c>Media/switch/tracks.mkv</c> has two AAC tracks (A1, A2: the server direct plays them) and two E-AC-3 tracks (E1, E2: Windows has
-/// no decoder for them, the server transcodes them, <c>hls-e0</c> and <c>hls-e1</c>). Direct to direct is the player's own switch; the
-/// others open another stream and resume at the position the item was at, as the view model does.
+/// <c>Media/switch/tracks.mkv</c> has two AAC tracks (A1, A2) and two DTS tracks (D1, D2). Whether a track is direct played or
+/// transcoded is not decided here: the profile of the Windows media player (<see cref="WmpDeviceProfileManager.Build"/> with the
+/// decoders of a machine) lists AAC and not DTS, and the server transcodes what the profile does not list (<c>hls-d0</c> and
+/// <c>hls-d1</c> are the transcodes of D1 and D2, to AAC). Direct to direct is the player's own switch, as the view model decides it
+/// (<see cref="AudioSwitchPolicy"/>); the others open another stream and resume at the position the item was at.
 /// What is looked at: the position given to the time bar, every video frame the player produces and whether it would have been shown,
 /// and the sound that reaches the audio device.
 /// </summary>
@@ -19,20 +24,61 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 	private static readonly TimeSpan ServerDelay = TimeSpan.FromMilliseconds(700);
 	private static readonly TimeSpan ServerAnswer = TimeSpan.FromSeconds(2);
 
-	private sealed record Track(string Name, bool Direct, int Ordinal, string? Hls);
+	private static readonly Guid[] InBoxAudio = [WmpSubtypes.Aac, WmpSubtypes.Mp3, WmpSubtypes.Mpeg, WmpSubtypes.Ac3, WmpSubtypes.Eac3, WmpSubtypes.Flac, WmpSubtypes.Alac, WmpSubtypes.WmaV9];
 
-	private static readonly Track A1 = new("A1", true, 0, null);
-	private static readonly Track A2 = new("A2", true, 1, null);
-	private static readonly Track E1 = new("E1", false, 2, "hls-e0/index.m3u8");
-	private static readonly Track E2 = new("E2", false, 3, "hls-e1/index.m3u8");
+	/// <summary>The profile the server gets from a Windows media player with the decoders of a plain Windows (no DTS).</summary>
+	private static readonly DeviceProfile Profile = WmpDeviceProfileManager.Build(new WmpCapabilities
+	{
+		VideoDecoders = new HashSet<Guid>([WmpSubtypes.H264, WmpSubtypes.Mpeg2, WmpSubtypes.Vc1]),
+		AudioDecoders = new HashSet<Guid>(InBoxAudio),
+		HardwareDecoders = [],
+		AudioChannelCount = 2,
+	});
 
-	private static Track ByName(string name) => new[] { A1, A2, E1, E2 }.Single(x => x.Name == name);
+	/// <summary>The streams of the file as the server lists them.</summary>
+	private static readonly MediaSourceInfo Source = new()
+	{
+		Id = "switch",
+		Container = "mkv",
+		MediaStreams =
+		[
+			new MediaStream { Index = 0, Type = MediaStream_Type.Video, Codec = "h264" },
+			new MediaStream { Index = 1, Type = MediaStream_Type.Audio, Codec = "aac", Channels = 2, SampleRate = 48000 },
+			new MediaStream { Index = 2, Type = MediaStream_Type.Audio, Codec = "aac", Channels = 2, SampleRate = 48000 },
+			new MediaStream { Index = 3, Type = MediaStream_Type.Audio, Codec = "dts", Channels = 2, SampleRate = 48000 },
+			new MediaStream { Index = 4, Type = MediaStream_Type.Audio, Codec = "dts", Channels = 2, SampleRate = 48000 },
+		],
+	};
+
+	/// <summary>An audio track of the file; <see cref="Direct"/> is what the profile says about its codec, as the server decides it.</summary>
+	private sealed record Track(string Name, int StreamIndex, string? Hls)
+	{
+		public bool Direct => AudioSwitchPolicy.CanSwitchInPlayer(PlaybackProgressInfo_PlayMethod.DirectPlay, Source, StreamIndex, Profile);
+
+		/// <summary>The position among the audio tracks of the file, which the player lists.</summary>
+		public int Ordinal => StreamIndex - 1;
+	}
+
+	private static readonly Track A1 = new("A1", 1, null);
+	private static readonly Track A2 = new("A2", 2, null);
+	private static readonly Track D1 = new("D1", 3, "hls-d0/index.m3u8");
+	private static readonly Track D2 = new("D2", 4, "hls-d1/index.m3u8");
+
+	private static Track ByName(string name) => new[] { A1, A2, D1, D2 }.Single(x => x.Name == name);
+
+	[Fact]
+	public void TheProfileOfTheWindowsMediaPlayer_DirectPlaysAacAndTranscodesDts()
+	{
+		// the premise of the tests below: they would mean nothing if the profile listed DTS
+		Assert.True(A1.Direct && A2.Direct, "AAC is not direct played by the profile");
+		Assert.True(!D1.Direct && !D2.Direct, "DTS is direct played by the profile");
+	}
 
 	[Theory]
 	[InlineData("A1", "A2")]
-	[InlineData("A1", "E1")]
-	[InlineData("E1", "A2")]
-	[InlineData("E1", "E2")]
+	[InlineData("A1", "D1")]
+	[InlineData("D1", "A2")]
+	[InlineData("D1", "D2")]
 	public async Task SwitchingTheTrack_NeverShowsTheStartOfTheMedia_AndKeepsThePosition(string fromName, string toName)
 	{
 		var from = ByName(fromName);
@@ -57,7 +103,7 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 	/// <summary>Leaving the item and playing it again, the first thing of the playback: resumed at the position it was left at.</summary>
 	[Theory]
 	[InlineData("A1")]
-	[InlineData("E1")]
+	[InlineData("D1")]
 	public async Task PlayingAnItemAgain_NeverShowsTheStartOfTheMedia(string trackName)
 	{
 		var track = ByName(trackName);
