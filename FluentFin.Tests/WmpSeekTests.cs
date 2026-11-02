@@ -61,6 +61,61 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		Assert.True(seeker.Position >= Target - TimeSpan.FromSeconds(2), $"the player is at {seeker.Position}, the seek was to {Target}");
 	}
 
+	/// <summary>
+	/// What the app does to resume an item that has several audio tracks (a direct play): the controller opens the file, the seek waits
+	/// for the media, and when it is open the audio track of the item is selected and the position is set. Both orders of the two:
+	/// the position the player really plays from, and where it is after the seconds that follow.
+	/// </summary>
+	[Theory]
+	[InlineData(true)]
+	[InlineData(false)]
+	public async Task Resuming_AnItemWithAudioTracks_PlaysFromTheResumePosition(bool selectTrackFirst)
+	{
+		var media = new Uri(Path.Combine(AppContext.BaseDirectory, "Media", "audio-tracks.mkv"));
+		using var player = new MediaPlayer { AutoPlay = false };
+		var seeker = new WmpSeeker(player);
+		var played = new List<TimeSpan>();
+		player.PlaybackSession.PositionChanged += (s, _) =>
+		{
+			if (s.PlaybackState == MediaPlaybackState.Playing)
+			{
+				lock (played) { played.Add(s.Position); }
+			}
+		};
+
+		var item = new MediaPlaybackItem(MediaSource.CreateFromUri(media));
+		player.MediaOpened += (_, _) =>
+		{
+			if (selectTrackFirst)
+			{
+				item.AudioTracks.SelectedIndex = 2;
+				seeker.NotifyOpened();
+			}
+			else
+			{
+				seeker.NotifyOpened();
+				item.AudioTracks.SelectedIndex = 2;
+			}
+		};
+
+		player.Source = item;
+		player.Play();
+		seeker.PlayRequested = true;
+		seeker.SeekTo(Target);
+
+		await Task.Delay(TimeSpan.FromSeconds(3));
+
+		string text;
+		lock (played) { text = string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0"))); }
+		output.WriteLine($"selectTrackFirst={selectTrackFirst}: state={player.PlaybackSession.PlaybackState}, position={player.PlaybackSession.Position:g}, selected={item.AudioTracks.SelectedIndex}, played: {text}");
+		lock (played)
+		{
+			Assert.True(played.All(x => x >= Target - TimeSpan.FromSeconds(1)), $"selectTrackFirst={selectTrackFirst}: the player played from {string.Join(", ", played.Where(x => x < Target - TimeSpan.FromSeconds(1)))}");
+		}
+
+		Assert.True(player.PlaybackSession.Position >= Target - TimeSpan.FromSeconds(1), $"selectTrackFirst={selectTrackFirst}: the player is at {player.PlaybackSession.Position}, the resume position was {Target}");
+	}
+
 	/// <summary>A pause of the user is kept when the seek has to wait for the media to open.</summary>
 	[Fact]
 	public async Task APausedPlayer_StaysPaused_WhenTheSeekWaitsForTheMediaToOpen()
