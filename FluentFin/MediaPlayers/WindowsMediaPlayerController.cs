@@ -177,6 +177,7 @@ namespace FluentFin.MediaPlayers
 
 		public void Pause()
 		{
+			_seeker.CancelPlayWhenSeeked();
 			try
 			{
 				_mp.Pause();
@@ -186,6 +187,7 @@ namespace FluentFin.MediaPlayers
 
 		public bool Play()
 		{
+			_seeker.CancelPlayWhenSeeked();
 			try
 			{
 				// Stop() released the source, the play session of that media has ended on the server

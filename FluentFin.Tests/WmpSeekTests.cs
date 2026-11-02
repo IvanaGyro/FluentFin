@@ -25,7 +25,9 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		using var player = new MediaPlayer { AutoPlay = false };
 		var seeker = new WmpSeeker(player);
 		var shown = new List<TimeSpan>();
+		var played = new List<TimeSpan>();
 		using var subscription = seeker.PositionChanged.Subscribe(shown.Add);
+		player.PlaybackSession.PositionChanged += (s, _) => { lock (played) { played.Add(s.Position); } };
 		player.MediaOpened += (_, _) => seeker.NotifyOpened();
 
 		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
@@ -33,6 +35,16 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		seeker.SeekTo(Target);
 
 		await Task.Delay(TimeSpan.FromSeconds(4));
+
+		// what the player really played, not what the time bar was given: the video must not run from the start of the stream
+		output.WriteLine("played: " + string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0"))));
+		lock (played)
+		{
+			Assert.NotEmpty(played);
+			Assert.True(played.All(x => x >= Target - TimeSpan.FromSeconds(1)), "the player was at " + string.Join(", ", played.Where(x => x < Target - TimeSpan.FromSeconds(1))));
+		}
+
+		Assert.Equal(MediaPlaybackState.Playing, player.PlaybackSession.PlaybackState);
 
 		output.WriteLine("shown: " + string.Join(", ", shown.Select(x => x.TotalSeconds.ToString("0.0"))));
 		output.WriteLine($"state={player.PlaybackSession.PlaybackState}, actual={player.PlaybackSession.Position:g}, seeker={seeker.Position:g}");

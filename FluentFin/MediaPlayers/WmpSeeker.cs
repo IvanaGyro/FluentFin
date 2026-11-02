@@ -58,15 +58,58 @@ internal sealed class WmpSeeker
 
 		_seek.Set(time);
 		_shown.OnNext(time);
+
+		// The player started playing the stream from its start, and shows it, while it cannot seek yet. It waits, paused, until the
+		// media is open and has been moved to the position, and then plays.
+		try
+		{
+			_mp.Pause();
+			_playWhenSeeked = true;
+			_ = PlayAnywayLater();
+		}
+		catch
+		{
+		}
 	}
 
 	/// <summary>The media is open, the player can seek now.</summary>
 	public void NotifyOpened()
 	{
-		if (_seek.Target is { } target && CanSeekNow)
+		if (_seek.Target is { } target)
 		{
 			SetPosition(target);
 		}
+
+		PlayIfWaiting();
+	}
+
+	/// <summary>The app plays or pauses by itself, the player does not play on its own once it is at the position.</summary>
+	public void CancelPlayWhenSeeked() => _playWhenSeeked = false;
+
+	private volatile bool _playWhenSeeked;
+
+	private void PlayIfWaiting()
+	{
+		if (!_playWhenSeeked)
+		{
+			return;
+		}
+
+		_playWhenSeeked = false;
+		try
+		{
+			_mp.Play();
+		}
+		catch
+		{
+		}
+	}
+
+	/// <summary>A player that never reports the media open does not stay paused.</summary>
+	private async Task PlayAnywayLater()
+	{
+		await Task.Delay(TimeSpan.FromSeconds(10));
+		PlayIfWaiting();
 	}
 
 	private TimeSpan ActualPosition => _mp.SafeGetValue(mp => mp.PlaybackSession.Position, TimeSpan.Zero);
