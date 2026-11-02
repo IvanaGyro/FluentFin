@@ -109,12 +109,35 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		Assert.True(positions[2] > positions[1] && positions[1] > positions[0], "the positions did not go on: " + string.Join(", ", positions));
 	}
 
+	/// <summary>
+	/// The same loop with the order the controller had (the track first), the build that was reported: every playback starts again from
+	/// the start of the file, is left a few seconds later, and the server keeps that position. Reported, not asserted.
+	/// </summary>
+	[Fact]
+	public async Task Baseline_TheLoopWithTheTrackSelectedFirst_StartsAgainFromTheStart()
+	{
+		var server = TimeSpan.FromSeconds(8);
+		var positions = new List<string>();
+
+		for (var playback = 1; playback <= 3; playback++)
+		{
+			var (played, left, _) = await OpenAndResume(server, trackFirst: true, listen: TimeSpan.FromSeconds(2.5));
+			positions.Add($"started from {server.TotalSeconds:0.0}s, played {string.Join("/", played.Select(x => x.TotalSeconds.ToString("0.0")))}, left at {left.TotalSeconds:0.0}s");
+			server = left;
+		}
+
+		output.WriteLine("track first: " + string.Join(" | ", positions));
+	}
+
 	/// <summary>Opens the file as the controller does and resumes at <paramref name="resumeAt"/>; returns what was played, where the player is when it is left, and the selected track.</summary>
 	private async Task<(List<TimeSpan> Played, TimeSpan Position, int Selected)> OpenAndResume(TimeSpan resumeAt, bool trackFirst, TimeSpan? listen = null)
 	{
 		var media = new Uri(Path.Combine(AppContext.BaseDirectory, "Media", "audio-tracks.mkv"));
 		using var player = new MediaPlayer { AutoPlay = false };
 		var seeker = new WmpSeeker(player);
+
+		// the time bar listens to the position all the time, and the seek that is held ends when it sees the player at the position
+		using var timeBar = seeker.PositionChanged.Subscribe(_ => { });
 		var played = new List<TimeSpan>();
 		player.PlaybackSession.PositionChanged += (s, _) =>
 		{
