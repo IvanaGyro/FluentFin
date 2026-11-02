@@ -256,6 +256,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		if (!IsAudioSwitch(item.Selection, item.Media?.MediaSourceInfo, streamIndex))
+		{
+			return;
+		}
+
 		// A second pick while the first is still loading finds the player stopped and has no position, it continues the first switch
 		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
 		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
@@ -274,6 +279,13 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			logger.LogError(ex, "Unable to switch to audio stream {Index}", streamIndex);
 		}
 	}
+
+	/// <summary>
+	/// Whether picking the stream changes what plays. The selection is set when a switch starts, so it is the stream to compare with
+	/// also while that switch is still loading: picking the stream that played before it supersedes the switch.
+	/// </summary>
+	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested) =>
+		requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
 
 	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused);
 
@@ -467,13 +479,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		var selected = audioIndex is { } index && tracks.Any(x => x.Id == index) ? index : tracks[0].Id;
-		return new SourceAudioMenu(tracks, selected, track =>
-		{
-			if (track.Id != selected)
-			{
-				switchTo(track.Id);
-			}
-		});
+		return new SourceAudioMenu(tracks, selected, track => switchTo(track.Id));
 	}
 
 	internal static List<AudioTrack> BuildSourceAudioTracks(MediaSourceInfo source) =>

@@ -79,13 +79,22 @@ public sealed class VideoPlayerAudioTrackTests
 	}
 
 	[Fact]
-	public void SourceMenu_DoesNotReloadForTheStreamThatPlays()
+	public void PickingTheStreamThatPlays_IsNoSwitch()
 	{
-		var picked = new List<int>();
-		var menu = VideoPlayerViewModel.BuildSourceAudioMenu(Source, 3, picked.Add)!;
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
 
-		menu.Select(menu.Tracks[2]);
-		Assert.Empty(picked);
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(null, playing, 3));
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(null, playing, 4));
+	}
+
+	[Fact]
+	public void PickingTheFirstStreamAgain_WhileASwitchIsPending_SupersedesIt()
+	{
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
+
+		// 3 plays, 4 is picked and its request is pending (the selection is 4), then 3 is picked again
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(4, null), playing, 3));
 	}
 
 	[Fact]
