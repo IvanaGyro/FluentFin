@@ -27,7 +27,14 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		var shown = new List<TimeSpan>();
 		var played = new List<TimeSpan>();
 		using var subscription = seeker.PositionChanged.Subscribe(shown.Add);
-		player.PlaybackSession.PositionChanged += (s, _) => { lock (played) { played.Add(s.Position); } };
+		player.PlaybackSession.PositionChanged += (s, _) =>
+		{
+			// the position is zero while the media opens, what counts is what is played
+			if (s.PlaybackState == MediaPlaybackState.Playing)
+			{
+				lock (played) { played.Add(s.Position); }
+			}
+		};
 		player.MediaOpened += (_, _) => seeker.NotifyOpened();
 
 		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
@@ -36,7 +43,7 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 
 		await Task.Delay(TimeSpan.FromSeconds(4));
 
-		// what the player really played, not what the time bar was given: the video must not run from the start of the stream
+		// what the player really played, not what the time bar was given: the video must not play from the start of the stream
 		output.WriteLine("played: " + string.Join(", ", played.Select(x => x.TotalSeconds.ToString("0.0"))));
 		lock (played)
 		{
