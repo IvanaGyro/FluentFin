@@ -31,5 +31,65 @@ jobs:
     -   name: 'Add Windows Community Toolkit labs nuget source'
         run: dotnet nuget add source https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json -n CommunityToolkitLabs
 
+    # FlyleafAudioPlaybackTests play audio; the runner has no audio device, so install a virtual one (VB-Cable)
+    -   name: 'Install a virtual audio device'
+        uses: LABSN/sound-ci-helpers@v1
+
+    -   name: 'Start the Windows audio service'
+        shell: pwsh
+        run: |
+            Set-Service Audiosrv -StartupType Automatic
+            Start-Service Audiosrv
+
     -   name: 'Test the app'
         run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64
+
+  # Flyleaf on arm64 runs native arm64 code (FFmpeg, XAudio2, the .NET runtime) that x64 does not: play audio there too.
+  flyleaf-arm64:
+    name: 'Flyleaf playback tests (arm64)'
+    runs-on: windows-11-arm
+    env:
+        # the arm64 FFmpeg of the release build (ci_deploy.yml): the FFmpeg 9.0 release branch, the ABI Flyleaf is built for
+        FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-01-12-49/ffmpeg-n9.0.2-42-gd7643a0fe3-winarm64-gpl-shared-9.0.zip
+        FFMPEG_ARM64_SHA256: 233083531d51a4bf53fe5c1a58266ccdee90c25aee113c58f49ca0769dec7ef7
+    steps:
+    -   name: 'Checkout'
+        uses: actions/checkout@v4
+
+    -   name: 'Install dotnet'
+        uses: actions/setup-dotnet@v4
+        with:
+            dotnet-version: '10.0'
+
+    -   name: 'Setup msbuild'
+        uses: microsoft/setup-msbuild@v2
+
+    -   name: 'Add Windows Community Toolkit labs nuget source'
+        run: dotnet nuget add source https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json -n CommunityToolkitLabs
+
+    -   name: 'Download arm64 FFmpeg'
+        shell: pwsh
+        run: |
+            Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
+            if ((Get-FileHash ffmpeg-arm64.zip -Algorithm SHA256).Hash -ne $env:FFMPEG_ARM64_SHA256) { throw 'arm64 FFmpeg checksum mismatch' }
+            Expand-Archive ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64
+            New-Item -ItemType Directory -Force FluentFin\FFMpeg-arm64 | Out-Null
+            foreach ($x64 in Get-ChildItem FluentFin\FFMpeg\*.dll) {
+                $match = Get-ChildItem ffmpeg-arm64 -Recurse -Filter $x64.Name | Select-Object -First 1
+                if (-not $match) { throw "arm64 FFmpeg is missing $($x64.Name)" }
+                Copy-Item $match.FullName FluentFin\FFMpeg-arm64\
+            }
+
+    # VB-Cable 4.5 has an ARM64 driver; sound-ci-helpers installs the x64-only 4.3
+    -   name: 'Install a virtual audio device'
+        shell: pwsh
+        run: |
+            Invoke-WebRequest https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip -OutFile vbcable.zip
+            Expand-Archive vbcable.zip -DestinationPath vbcable
+            $p = Start-Process vbcable\VBCABLE_Setup_x64.exe -ArgumentList '-i','-h' -PassThru -Wait
+            if ($p.ExitCode -ne 0) { throw "VB-Cable setup failed ($($p.ExitCode))" }
+            Set-Service Audiosrv -StartupType Automatic
+            Start-Service Audiosrv
+
+    -   name: 'Test Flyleaf playback'
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=ARM64 -p:Platforms=ARM64 -p:RuntimeIdentifier=win-arm64 --filter "FullyQualifiedName~FlyleafAudioPlaybackTests" --blame-crash --logger "console;verbosity=normal"
