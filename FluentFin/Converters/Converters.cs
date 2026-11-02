@@ -142,11 +142,14 @@ public static class Converters
 		return flyout;
 	}
 
+	/// <summary>The subtitle stream the player menu marks: what was picked wins over the server's default, and -1 means "None".</summary>
+	internal static int? ActiveSubtitleIndex(PlaybackSelection? selection, MediaSourceInfo? source) =>
+		selection?.SubtitleStreamIndex ?? source?.DefaultSubtitleStreamIndex;
+
 	public static FlyoutBase? GetSubtitlesFlyout(IMediaPlayerController mp, MediaResponse response, FluentFin.ViewModels.PlaylistItem? playlistItem = null)
 	{
 		var subtitles = response?.MediaSourceInfo.MediaStreams?.Where(x => x.Type == MediaStream_Type.Subtitle).ToList() ?? [];
-		// what the page picked wins over the server's default, and -1 means "None"
-		var defaultSubtitleIndex = playlistItem?.Selection?.SubtitleStreamIndex ?? response?.MediaSourceInfo.DefaultSubtitleStreamIndex;
+		var defaultSubtitleIndex = ActiveSubtitleIndex(playlistItem?.Selection, response?.MediaSourceInfo);
 
 		if (subtitles.Count == 0)
 		{

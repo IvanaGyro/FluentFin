@@ -64,6 +64,84 @@ public sealed class VideoPlayerViewModelSubtitleTests
 		Assert.Equal([16], knownWhenOpened);
 	}
 
+	[Fact]
+	public async Task NoneSelected_DisablesTheSubtitlesAgainOnceThePlayerHasLoadedItsTracks()
+	{
+		// the players turn a subtitle on by themselves when they have loaded the tracks of the file
+		var subtitles = Enumerable.Range(2, 3).Select(index => EmbeddedSubtitle(index, "Embed", null)).ToArray();
+		var response = Response(PlaybackProgressInfo_PlayMethod.DirectPlay, subtitles);
+		var item = ItemPlaying(response);
+		item.Selection = new PlaybackSelection(null, PlaybackSelection.NoSubtitles);
+
+		var reported = new Queue<int>([0, 0, 3]);
+		var disabledWithTracks = new List<int>();
+		var known = 0;
+		_player.SetupGet(x => x.SubtitleTrackCount).Returns(() => known = reported.Count > 1 ? reported.Dequeue() : reported.Peek());
+		_player.Setup(x => x.DisableSubtitles()).Callback(() => disabledWithTracks.Add(known));
+
+		await CreateViewModel().DisableSubtitlesWhenReady(_player.Object, item, response, version: 0);
+
+		// at once, and again after the tracks are known
+		Assert.Equal([0, 3], disabledWithTracks);
+	}
+
+	[Fact]
+	public async Task NoneSelected_AnotherItemStartedMeanwhile_DoesNotDisableTheSubtitlesOfTheNewItem()
+	{
+		var subtitles = Enumerable.Range(2, 3).Select(index => EmbeddedSubtitle(index, "Embed", null)).ToArray();
+		var response = Response(PlaybackProgressInfo_PlayMethod.DirectPlay, subtitles);
+		var item = ItemPlaying(response);
+		item.Selection = new PlaybackSelection(null, PlaybackSelection.NoSubtitles);
+		_player.SetupGet(x => x.SubtitleTrackCount).Returns(3);
+
+		// the view model has loaded another item since: its load version is no longer the one of this task
+		var viewModel = CreateViewModel();
+		viewModel.GetType().GetField("_loadVersion", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(viewModel, 1);
+
+		await viewModel.DisableSubtitlesWhenReady(_player.Object, item, response, version: 0);
+
+		// only the immediate call of the task itself, none after the wait
+		_player.Verify(x => x.DisableSubtitles(), Times.Once);
+	}
+
+	[Fact]
+	public async Task NoneSelected_SubtitlePickedInThePlayerMenuMeanwhile_IsNotDisabled()
+	{
+		var subtitles = Enumerable.Range(2, 3).Select(index => EmbeddedSubtitle(index, "Embed", null)).ToArray();
+		var response = Response(PlaybackProgressInfo_PlayMethod.DirectPlay, subtitles);
+		var item = ItemPlaying(response);
+		item.Selection = new PlaybackSelection(null, PlaybackSelection.NoSubtitles);
+
+		// the user picks the subtitle of stream 3 from the player menu while the task waits for the tracks
+		var calls = 0;
+		_player.SetupGet(x => x.SubtitleTrackCount).Returns(() =>
+		{
+			if (++calls == 2)
+			{
+				item.Selection = new PlaybackSelection(null, 3);
+			}
+
+			return 0;
+		});
+
+		await CreateViewModel().DisableSubtitlesWhenReady(_player.Object, item, response, version: 0);
+
+		_player.Verify(x => x.DisableSubtitles(), Times.Once);
+	}
+
+	[Fact]
+	public void SubtitleMenu_ChecksNoneWhenNoneWasPickedOnThePage()
+	{
+		var source = new MediaSourceInfo { DefaultSubtitleStreamIndex = 4 };
+
+		// the server's default subtitle is 4, the page picked "None"
+		Assert.Equal(PlaybackSelection.NoSubtitles, FluentFin.Converters.Converters.ActiveSubtitleIndex(new PlaybackSelection(null, PlaybackSelection.NoSubtitles), source));
+		Assert.Equal(7, FluentFin.Converters.Converters.ActiveSubtitleIndex(new PlaybackSelection(null, 7), source));
+		Assert.Equal(4, FluentFin.Converters.Converters.ActiveSubtitleIndex(new PlaybackSelection(null, null), source));
+		Assert.Equal(4, FluentFin.Converters.Converters.ActiveSubtitleIndex(null, source));
+		Assert.Null(FluentFin.Converters.Converters.ActiveSubtitleIndex(null, new MediaSourceInfo()));
+	}
+
 	private VideoPlayerViewModel CreateViewModel() => new(
 		_client.Object,
 		new TrickplayViewModel(_client.Object),
