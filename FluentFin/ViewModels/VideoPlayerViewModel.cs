@@ -31,6 +31,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 							INavigationService navigationService,
 							IPlaybackSessionManager playbackSessions,
 							ISettings settings,
+							IDeviceProfileFactory deviceProfiles,
 							ITaskBarProgress taskBarProgress) : ObservableObject, INavigationAware
 {
 	private readonly CompositeDisposable _disposables = [];
@@ -262,6 +263,13 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
+		// A direct play has all the audio streams of the file and the player switches, if the device profile plays the codec of the stream:
+		// no new request, no reload. Otherwise (a transcode, or a codec the player does not play) the server decides again, as in the web client.
+		if (_audioSwitch is null && TrySwitchInPlayer(item, streamIndex))
+		{
+			return;
+		}
+
 		// A second pick while the first is still loading finds the player stopped and has no position, it continues the first switch
 		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
 		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
@@ -311,6 +319,28 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// </summary>
 	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested) =>
 		requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
+
+	private bool TrySwitchInPlayer(PlaylistItem item, int streamIndex)
+	{
+		if (item.Media is not { } media || MediaPlayer is null
+			|| !AudioSwitchPolicy.CanSwitchInPlayer(media.PlayMethod, media.MediaSourceInfo, streamIndex, deviceProfiles.GetDeviceProfile()))
+		{
+			return false;
+		}
+
+		var ordinal = DirectPlayAudioOrdinal(media.PlayMethod, media.MediaSourceInfo, streamIndex);
+		var tracks = MediaPlayer.GetAudioTracks().ToList();
+		if (ordinal is not { } index || index >= tracks.Count)
+		{
+			logger.LogWarning("Audio switch: stream {Index} is track {Ordinal} of the file, the player has {Count} tracks, asking the server", streamIndex, ordinal, tracks.Count);
+			return false;
+		}
+
+		logger.LogInformation("Audio switch: stream {Index} (track {Ordinal}) in {Player}, no new request", streamIndex, index, MediaPlayer.GetType().Name);
+		MediaPlayer.OpenAudioTrack(tracks[index].Id);
+		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
+		return true;
+	}
 
 	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused, PlaybackSelection? PreviousSelection);
 
