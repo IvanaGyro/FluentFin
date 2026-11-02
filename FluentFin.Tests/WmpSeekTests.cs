@@ -67,6 +67,62 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		output.WriteLine($"baseline: state={player.PlaybackSession.PlaybackState}, actual={player.PlaybackSession.Position:g}");
 	}
 
+	/// <summary>
+	/// The switch to a transcoded audio track: the app stops the player (it reports zero), asks the server, which takes seconds,
+	/// and only then opens the stream and seeks. The time bar has to stay at the resume position through all of it.
+	/// </summary>
+	[Fact]
+	public async Task TheTimeBar_StaysAtTheResumePosition_WhileThePlayerIsStoppedAndTheServerAnswers()
+	{
+		var shown = await Switch(hold: true);
+
+		Assert.NotEmpty(shown);
+		Assert.True(shown.All(x => x >= Target - TimeSpan.FromSeconds(2)), "the time bar was given " + string.Join(", ", shown.Where(x => x < Target - TimeSpan.FromSeconds(2))));
+	}
+
+	/// <summary>The same without holding the position, what the app did: reported, not asserted.</summary>
+	[Fact]
+	public async Task Baseline_TheTimeBarWhileThePlayerIsStopped_IsReported()
+	{
+		var shown = await Switch(hold: false);
+
+		output.WriteLine("baseline, the time bar was given: " + string.Join(", ", shown.Select(x => x.TotalSeconds.ToString("0.0"))));
+	}
+
+	private async Task<List<TimeSpan>> Switch(bool hold)
+	{
+		using var server = new LocalHls(Path.Combine(AppContext.BaseDirectory, "Media", "hls"));
+		using var player = new MediaPlayer { AutoPlay = false };
+		var seeker = new WmpSeeker(player);
+		var shown = new List<TimeSpan>();
+		using var subscription = seeker.PositionChanged.Subscribe(x => { lock (shown) { shown.Add(x); } });
+		player.MediaOpened += (_, _) => seeker.NotifyOpened();
+
+		// an item that plays
+		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
+		player.Play();
+		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		lock (shown) { shown.Clear(); }
+
+		// the switch
+		if (hold)
+		{
+			seeker.Hold(Target);
+		}
+
+		player.Pause();
+		player.Source = null;
+		await Task.Delay(TimeSpan.FromSeconds(2));
+
+		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
+		player.Play();
+		seeker.SeekTo(Target);
+		await Task.Delay(TimeSpan.FromSeconds(4));
+
+		output.WriteLine($"hold={hold}: state={player.PlaybackSession.PlaybackState}, actual={player.PlaybackSession.Position:g}, seeker={seeker.Position:g}");
+		lock (shown) { return [.. shown]; }
+	}
+
 	/// <summary>The files of a folder over http on localhost, the way the server sends an HLS transcode.</summary>
 	private sealed class LocalHls : IDisposable
 	{

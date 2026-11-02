@@ -13,6 +13,12 @@ public interface IMediaPlayerController : IDisposable
 	void DisableSubtitles();
 	void OpenAudioTrack(int index);
 	void SeekTo(TimeSpan timeSpan);
+
+	/// <summary>
+	/// Shows this position until the player is at it, whatever the player reports meanwhile: a stopped player and a new stream report
+	/// zero, and the time bar would go to zero while the server answers for another audio stream. Null ends it.
+	/// </summary>
+	void HoldPosition(TimeSpan? position);
 	IEnumerable<AudioTrack> GetAudioTracks();
 
 	/// <summary>

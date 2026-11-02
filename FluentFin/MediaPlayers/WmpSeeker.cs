@@ -33,8 +33,18 @@ internal sealed class WmpSeeker
 	/// <summary>The position to show: the one asked for until the player has reached it.</summary>
 	public TimeSpan Position => _seek.Target ?? ActualPosition;
 
-	/// <summary>New media: a seek of the previous one is over.</summary>
-	public void Reset() => _seek.Clear();
+	/// <summary>Shows the position until the player is at it, null ends it.</summary>
+	public void Hold(TimeSpan? position)
+	{
+		if (position is not { } held)
+		{
+			_seek.Clear();
+			return;
+		}
+
+		_seek.Set(held);
+		_shown.OnNext(held);
+	}
 
 	public void SeekTo(TimeSpan time)
 	{

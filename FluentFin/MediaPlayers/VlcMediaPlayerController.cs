@@ -84,8 +84,7 @@ namespace FluentFin.MediaPlayers
 			}
 
 			// the position is cached from TimeChanged and would still be the one of the previous media
-			_seek.Clear();
-			Position = TimeSpan.Zero;
+			Position = _seek.Target ?? TimeSpan.Zero;
 			lock (_recentLog)
 			{
 				_recentLog.Clear();
@@ -115,10 +114,19 @@ namespace FluentFin.MediaPlayers
 			OpenAudioTrack(tracks[ordinal].Id);
 		}
 
-		public void Stop()
+		public void Stop() => _mp.Stop();
+
+		public void HoldPosition(TimeSpan? position)
 		{
-			_seek.Clear();
-			_mp.Stop();
+			if (position is not { } held)
+			{
+				_seek.Clear();
+				return;
+			}
+
+			_seek.Set(held);
+			Position = held;
+			_seekPosition.OnNext(held);
 		}
 
 		/// <summary>

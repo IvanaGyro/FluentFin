@@ -298,6 +298,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		// the request failed, the stream can be picked again
 		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
 		{
+			MediaPlayer?.HoldPosition(null);
 			// the resume state is kept for the retry: the player is stopped, it has no position to give any more
 			// only the audio is undone: the subtitle may have been changed in the menu while the request was pending
 			item.Selection = RestoreAudio(item.Selection, previousSelection);
@@ -376,6 +377,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		// clean up the previous session first, whether or not the new media can be loaded
 		await StopPlayback();
+
+		// the stopped player reports zero while the server answers: the time bar stays where the item was
+		MediaPlayer.HoldPosition(resumeTicks is { } held ? TimeSpan.FromTicks(held) : null);
 
 		var full = await JellyfinClient.GetItem(selectedItem.Dto.Id.Value);
 

@@ -204,7 +204,6 @@ namespace FluentFin.MediaPlayers
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
 			_wantedAudioOrdinal = audioTrackOrdinal;
-			_seeker.Reset();
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
 			var source = MediaSource.CreateFromUri(uri);
@@ -269,13 +268,14 @@ namespace FluentFin.MediaPlayers
 
 		public void SeekTo(TimeSpan timeSpan) => _seeker.SeekTo(timeSpan);
 
+		public void HoldPosition(TimeSpan? position) => _seeker.Hold(position);
+
 		/// <summary>
 		/// Unlike <see cref="Pause"/>, releases the media source so that the network stream is closed.
 		/// </summary>
 		public void Stop()
 		{
 			_logger.LogInformation("Stopping, releasing the media source");
-			_seeker.Reset();
 			try
 			{
 				_mp.Pause();

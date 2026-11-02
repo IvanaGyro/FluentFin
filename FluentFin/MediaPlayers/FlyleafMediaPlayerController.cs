@@ -1,9 +1,11 @@
 ﻿using System.Reactive;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using System.Reflection;
 using System.Web;
 using DynamicData.Binding;
 using FluentFin.Core.Contracts.Services;
+using FluentFin.Core.Services;
 using FlyleafLib.Controls.WinUI;
 using FlyleafLib.MediaPlayer;
 using Microsoft.UI.Xaml.Controls;
@@ -14,6 +16,9 @@ namespace FluentFin.MediaPlayers;
 public sealed partial class FlyleafMediaPlayerController : IMediaPlayerController
 {
 	private readonly Player _mp = new();
+	private readonly PendingSeek _seek = new();
+	private readonly Subject<TimeSpan> _seekPosition = new();
+	private readonly IObservable<TimeSpan> _positionChanged;
 	private readonly Button _audiosFlyoutButton;
 	private int _defaultAudioIndex;
 	private int? _pendingAudioOrdinal;
@@ -23,6 +28,13 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		_audiosFlyoutButton = audioTracksButton;
 		_mp.Config.Player.KeyBindings.RemoveAll();
 		host.Player = _mp;
+
+		// shared, so that the position held is dropped once whoever listens has seen the player at it
+		_positionChanged = Observable.Merge(
+				_mp.WhenAnyValue(x => x.CurTime).Select(x => new TimeSpan(x)).Where(_seek.ShouldReport),
+				_seekPosition)
+			.Publish()
+			.RefCount();
 		_mp.PlaybackStopped += (_, e) => LastError = e.Error?.ToString() ?? LastError;
 
 		_mp.Audio.Streams
@@ -40,7 +52,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public MediaPlayerState State => ConvertState(_mp.Status);
 
-	public TimeSpan Position => new(_mp.CurTime);
+	public TimeSpan Position => _seek.Target ?? new(_mp.CurTime);
 	public bool IsPlaying => _mp.IsPlaying;
 	public bool IsMuted => _mp.Audio.Mute;
 	public int? SubtitleTrackIndex => _mp.Subtitles.Streams.FirstOrDefault(x => x.Enabled)?.StreamIndex - 1;
@@ -55,7 +67,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 	}
 
 	public IObservable<TimeSpan> DurationChanged => _mp.WhenAnyValue(x => x.Duration).Select(x => new TimeSpan(x));
-	public IObservable<TimeSpan> PositionChanged => _mp.WhenAnyValue(x => x.CurTime).Select(x => new TimeSpan(x));
+	public IObservable<TimeSpan> PositionChanged => _positionChanged;
 	public IObservable<Unit> Playing => _mp.WhenAnyValue(x => x.Status).Where(x => x is Status.Playing).Select(_ => Unit.Default);
 	public IObservable<Unit> Paused => _mp.WhenAnyValue(x => x.Status).Where(x => x is Status.Paused).Select(_ => Unit.Default);
 	public IObservable<Unit> Ended => _mp.WhenAnyValue(x => x.Status).Where(x => x is Status.Ended).Select(_ => Unit.Default);
@@ -130,7 +142,29 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		OpenAudioTrack(tracks[ordinal].Id);
 	}
 
-	public void SeekTo(TimeSpan timeSpan) => _mp.SeekAccurate((int)timeSpan.TotalMilliseconds);
+	public void SeekTo(TimeSpan timeSpan)
+	{
+		// a seek somewhere else ends the position that was held
+		if (_seek.Target is { } held && (held - timeSpan).Duration() > PendingSeek.Tolerance)
+		{
+			_seek.Clear();
+		}
+
+		_mp.SeekAccurate((int)timeSpan.TotalMilliseconds);
+	}
+
+	public void HoldPosition(TimeSpan? position)
+	{
+		if (position is not { } held)
+		{
+			_seek.Clear();
+			return;
+		}
+
+		_seek.Set(held);
+		_seekPosition.OnNext(held);
+	}
+
 	public void Stop() => _mp.Stop();
 
 	private static MediaPlayerState ConvertState(Status status)
