@@ -270,12 +270,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		_audioSwitch = state;
 		var request = ++_audioSwitchRequest;
 		var previousSelection = item.Selection;
-		var previousMedia = item.Media;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
+		var loaded = false;
 		try
 		{
-			await LoadSelectedItem(state.Ticks, state.Paused);
+			loaded = await LoadSelectedItem(state.Ticks, state.Paused);
 		}
 		catch (Exception ex)
 		{
@@ -283,7 +283,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		// the request failed, the stream can be picked again
-		if (SwitchFailed(item.Selection, streamIndex, previousMedia, item.Media, request, _audioSwitchRequest))
+		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
 		{
 			item.Selection = previousSelection;
 			if (ReferenceEquals(_audioSwitch, state))
@@ -294,11 +294,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	}
 
 	/// <summary>
-	/// A switch has failed when the media of the item was not replaced and no other pick has taken over the selection since,
-	/// which would have replaced it too.
+	/// A switch has failed when the load did not end in playback (no media, or the player could not open it) and no other pick has
+	/// taken over the selection since, which would have ended the load too.
 	/// </summary>
-	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, MediaResponse? before, MediaResponse? now, int request, int latestRequest) =>
-		request == latestRequest && selection?.AudioStreamIndex == requested && ReferenceEquals(before, now);
+	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, bool loaded, int request, int latestRequest) =>
+		!loaded && request == latestRequest && selection?.AudioStreamIndex == requested;
 
 	/// <summary>Numbers the picks, only the latest one may undo the selection, an older one that ends later was superseded and did not fail.</summary>
 	private int _audioSwitchRequest;
@@ -316,16 +316,16 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
 	/// <param name="startPaused">Whether to pause again once loaded, for the same reload.</param>
-	private async Task LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
+	private async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
 	{
 		if (MediaPlayer is null)
 		{
-			return;
+			return false;
 		}
 
 		if (Playlist.SelectedItem is not { Dto.Id: not null } selectedItem)
 		{
-			return;
+			return false;
 		}
 
 		var version = Interlocked.Increment(ref _loadVersion);
@@ -337,14 +337,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		if (full is null || version != _loadVersion)
 		{
-			return;
+			return false;
 		}
 
 		var mediaResponse = await GetMediaUrl(full, selectedItem.Selection);
 
 		if (mediaResponse is null || version != _loadVersion)
 		{
-			return;
+			return false;
 		}
 
 		TrickplayViewModel.SetItem(full);
@@ -369,7 +369,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
 			await StopPlayback();
-			return;
+			return false;
 		}
 
 		PlayMethod = mediaResponse.PlayMethod;
@@ -400,6 +400,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		await playbackSessions.ReportStartAsync(session, GetPlaybackState(MediaPlayer));
+		return true;
 	}
 
 	/// <summary>

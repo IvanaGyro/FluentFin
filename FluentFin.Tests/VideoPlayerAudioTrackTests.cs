@@ -114,15 +114,14 @@ public sealed class VideoPlayerAudioTrackTests
 	}
 
 	[Fact]
-	public void ASwitch_HasFailed_WhenTheMediaWasNotReplaced()
+	public void ASwitch_HasFailed_WhenTheLoadDidNotEndInPlayback()
 	{
-		var media = new MediaResponse(new Uri("http://localhost/a"), PlaybackProgressInfo_PlayMethod.Transcode, "s", "m", new MediaSourceInfo());
-
-		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media, 1, 1));
-		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media with { PlaybackSessionId = "t" }, 1, 1));
+		// no media, or the player could not open it: the media may have been assigned already, the load result is what counts
+		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, false, 1, 1));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, true, 1, 1));
 		// another pick took over the selection
-		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, media, media, 1, 1));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, false, 1, 1));
 		// a newer pick, also for the same stream, is in flight: this one was superseded
-		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media, 1, 3));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, false, 1, 3));
 	}
 }
