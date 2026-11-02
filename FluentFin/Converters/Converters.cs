@@ -121,7 +121,7 @@ public static class Converters
 			return null;
 		}
 
-		// while transcoding the menu lists the streams of the source file and picking one asks the server for it
+		// the menu lists the streams of the source file, the same names for every player, and picking one asks the server for it
 		if (source is not null)
 		{
 			defaultIndex = source.SelectedId;

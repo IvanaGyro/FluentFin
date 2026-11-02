@@ -245,8 +245,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	}
 
 	/// <summary>
-	/// Asks the server for the item again with the audio stream picked in the menu while transcoding, which plays it directly
-	/// if the stream allows it, and continues at the current position.
+	/// Asks the server for the item again with the audio stream picked in the menu, which transcodes or plays it directly
+	/// as the stream requires, and continues at the current position.
 	/// </summary>
 	private async void SwitchAudioStream(int streamIndex)
 	{
@@ -315,7 +315,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
-		MediaPlayer.SourceAudioMenu = TranscodeAudioMenu(mediaResponse, audioIndex);
+		MediaPlayer.SourceAudioMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, SwitchAudioStream);
 		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
@@ -438,22 +438,27 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		return ordinal >= 0 ? ordinal : null;
 	}
 
-	/// <summary>The audio streams of the source file for the menu while transcoding, as the player only sees the stream of the transcode.</summary>
-	internal SourceAudioMenu? TranscodeAudioMenu(MediaResponse response, int? audioIndex)
+	/// <summary>
+	/// The audio menu lists the audio streams of the source file for every play method: the player only knows the stream of a transcode,
+	/// and a stream that a direct play player could not decode needs the server to transcode it. Picking one therefore always asks the
+	/// server for it again, which decides between direct play and transcoding. Names also come from one place, the players differ.
+	/// </summary>
+	internal static SourceAudioMenu? BuildSourceAudioMenu(MediaSourceInfo source, int? audioIndex, Action<int> switchTo)
 	{
-		if (response.PlayMethod != PlaybackProgressInfo_PlayMethod.Transcode)
-		{
-			return null;
-		}
-
-		var tracks = BuildSourceAudioTracks(response.MediaSourceInfo);
+		var tracks = BuildSourceAudioTracks(source);
 		if (tracks.Count < 2)
 		{
 			return null;
 		}
 
 		var selected = audioIndex is { } index && tracks.Any(x => x.Id == index) ? index : tracks[0].Id;
-		return new SourceAudioMenu(tracks, selected, track => SwitchAudioStream(track.Id));
+		return new SourceAudioMenu(tracks, selected, track =>
+		{
+			if (track.Id != selected)
+			{
+				switchTo(track.Id);
+			}
+		});
 	}
 
 	internal static List<AudioTrack> BuildSourceAudioTracks(MediaSourceInfo source) =>

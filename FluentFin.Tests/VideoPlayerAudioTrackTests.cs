@@ -48,7 +48,7 @@ public sealed class VideoPlayerAudioTrackTests
 	}
 
 	[Fact]
-	public void TranscodeMenu_ListsTheAudioStreamsOfTheSourceByStreamIndex()
+	public void SourceMenu_ListsTheAudioStreamsOfTheSourceByStreamIndex()
 	{
 		var tracks = VideoPlayerViewModel.BuildSourceAudioTracks(Source);
 
@@ -60,8 +60,46 @@ public sealed class VideoPlayerAudioTrackTests
 	[InlineData("eng", "English")]
 	[InlineData("xxx", "xxx")]
 	[InlineData(null, null)]
-	public void TranscodeMenu_NamesTheLanguageLikeThePlayersDo(string? code, string? expected)
+	public void SourceMenu_NamesTheLanguageLikeThePlayersDo(string? code, string? expected)
 	{
 		Assert.Equal(expected, VideoPlayerViewModel.LanguageName(code));
+	}
+
+	[Fact]
+	public void SourceMenu_IsBuiltForDirectPlayToo_SoThatTheWayBackToATranscodeExists()
+	{
+		var picked = new List<int>();
+		var menu = VideoPlayerViewModel.BuildSourceAudioMenu(Source, 2, picked.Add);
+
+		Assert.NotNull(menu);
+		Assert.Equal(2, menu!.SelectedId);
+
+		menu.Select(menu.Tracks[5]);
+		Assert.Equal([6], picked);
+	}
+
+	[Fact]
+	public void SourceMenu_DoesNotReloadForTheStreamThatPlays()
+	{
+		var picked = new List<int>();
+		var menu = VideoPlayerViewModel.BuildSourceAudioMenu(Source, 3, picked.Add)!;
+
+		menu.Select(menu.Tracks[2]);
+		Assert.Empty(picked);
+	}
+
+	[Fact]
+	public void SourceMenu_FallsBackToTheFirstStream_WhenTheServerGaveNone()
+	{
+		Assert.Equal(1, VideoPlayerViewModel.BuildSourceAudioMenu(Source, null, _ => { })!.SelectedId);
+		Assert.Equal(1, VideoPlayerViewModel.BuildSourceAudioMenu(Source, 42, _ => { })!.SelectedId);
+	}
+
+	[Fact]
+	public void SourceMenu_IsNotShown_ForASingleAudioStream()
+	{
+		var single = new MediaSourceInfo { MediaStreams = [new MediaStream { Index = 1, Type = MediaStream_Type.Audio }] };
+
+		Assert.Null(VideoPlayerViewModel.BuildSourceAudioMenu(single, 1, _ => { }));
 	}
 }

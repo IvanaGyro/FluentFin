@@ -16,8 +16,8 @@ public interface IMediaPlayerController : IDisposable
 	IEnumerable<AudioTrack> GetAudioTracks();
 
 	/// <summary>
-	/// Replaces the audio menu of the player while transcoding, where the player only sees the one stream the server chose
-	/// and not the audio streams of the source file. Null for the tracks of the player itself.
+	/// Replaces the audio menu of the player with the audio streams of the source file, as the player only sees what the server sent,
+	/// which is one stream while transcoding. Null for the tracks of the player itself.
 	/// </summary>
 	SourceAudioMenu? SourceAudioMenu { get; set; }
 
