@@ -1,5 +1,7 @@
 ﻿using System.Reactive;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
+using FluentFin.Core.Services;
 using FluentFin.Core.Contracts.Services;
 using LibVLCSharp.Shared;
 using Microsoft.UI.Xaml.Controls;
@@ -15,6 +17,9 @@ namespace FluentFin.MediaPlayers
 		private Media? _media;
 		private int _defaultAudioIndex;
 		private int? _pendingAudioOrdinal;
+		private readonly PendingSeek _seek = new();
+		private readonly Subject<TimeSpan> _seekPosition = new();
+		private readonly IObservable<TimeSpan> _positionChanged;
 
 		public VlcMediaPlayerController(IVideoView view, string[] swapChainOptions, Button audioTracksButton)
 		{
@@ -23,6 +28,13 @@ namespace FluentFin.MediaPlayers
 			_audioTracksButton = audioTracksButton;
 			view.MediaPlayer = _mp;
 			_libVLC.Log += OnLibVlcLog;
+
+			// shared, so that the seek is applied once per event whoever listens
+			_positionChanged = Observable.Merge(
+					_mp.Events().TimeChanged.Select(e => TimeSpan.FromMilliseconds(e.Time)).Do(ApplyPendingSeek).Where(_seek.ShouldReport),
+					_seekPosition)
+				.Publish()
+				.RefCount();
 
 			PositionChanged.Subscribe(p => Position = p);
 		}
@@ -72,6 +84,7 @@ namespace FluentFin.MediaPlayers
 			}
 
 			// the position is cached from TimeChanged and would still be the one of the previous media
+			_seek.Clear();
 			Position = TimeSpan.Zero;
 			lock (_recentLog)
 			{
@@ -102,8 +115,37 @@ namespace FluentFin.MediaPlayers
 			OpenAudioTrack(tracks[ordinal].Id);
 		}
 
-		public void Stop() => _mp.Stop();
-		public void SeekTo(TimeSpan time) => _mp.SeekTo(time);
+		public void Stop()
+		{
+			_seek.Clear();
+			_mp.Stop();
+		}
+
+		/// <summary>
+		/// Right after opening the media the player cannot seek yet and reports the start of the stream, which would reset the time bar
+		/// for a few seconds. The seek is then kept, shown at once and made when the player can do it.
+		/// </summary>
+		public void SeekTo(TimeSpan time)
+		{
+			if (_mp.State is VLCState.Playing or VLCState.Paused && _mp.IsSeekable)
+			{
+				_seek.Clear();
+				_mp.SeekTo(time);
+				return;
+			}
+
+			_seek.Set(time);
+			Position = time;
+			_seekPosition.OnNext(time);
+		}
+
+		private void ApplyPendingSeek(TimeSpan reported)
+		{
+			if (_seek.Target is { } target && reported < target - PendingSeek.Tolerance && _mp.IsSeekable)
+			{
+				_mp.SeekTo(target);
+			}
+		}
 		public void Dispose() => _mp.Dispose();
 		public SourceAudioMenu? SourceAudioMenu { get; set; }
 
@@ -138,7 +180,7 @@ namespace FluentFin.MediaPlayers
 		}
 
 		public IObservable<TimeSpan> DurationChanged => _mp.Events().LengthChanged.Select(e => TimeSpan.FromMilliseconds(e.Length));
-		public IObservable<TimeSpan> PositionChanged => _mp.Events().TimeChanged.Select(e => TimeSpan.FromMilliseconds(e.Time));
+		public IObservable<TimeSpan> PositionChanged => _positionChanged;
 		public IObservable<Unit> Playing => _mp.Events().Playing.Select(_ => Unit.Default);
 		public IObservable<Unit> Paused => _mp.Events().Paused.Select(_ => Unit.Default);
 		public IObservable<Unit> Ended => _mp.Events().EndReached.Select(_ => Unit.Default);
