@@ -243,6 +243,10 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		_audioSwitch = null;
+		_loadFailed = false;
+
+		// a switch of the previous item that ends now was superseded, it must not touch what the player holds for this one
+		_audioSwitchRequest++;
 		await LoadSelectedItem();
 	}
 
@@ -258,14 +262,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		if (!IsAudioSwitch(item.Selection, item.Media?.MediaSourceInfo, streamIndex))
+		if (!IsAudioSwitch(item.Selection, item.Media?.MediaSourceInfo, streamIndex, _loadFailed))
 		{
 			return;
 		}
 
 		// A direct play has all the audio streams of the file and the player switches, if the device profile plays the codec of the stream:
 		// no new request, no reload. Otherwise (a transcode, or a codec the player does not play) the server decides again, as in the web client.
-		if (_audioSwitch is null && TrySwitchInPlayer(item, streamIndex))
+		if (_audioSwitch is null && !_loadFailed && TrySwitchInPlayer(item, streamIndex))
 		{
 			return;
 		}
@@ -277,6 +281,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused, item.Selection);
 		_audioSwitch = state;
 		var request = ++_audioSwitchRequest;
+		_loadFailed = false;
 		// what played before the chain of picks began, not the selection of a pick that was superseded
 		var previousSelection = state.PreviousSelection;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
@@ -298,7 +303,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		// the request failed, the stream can be picked again
 		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
 		{
-			MediaPlayer?.HoldPosition(null);
+			_loadFailed = true;
+			if (ReferenceEquals(Playlist.SelectedItem, item))
+			{
+				MediaPlayer?.HoldPosition(null);
+			}
 			// the resume state is kept for the retry: the player is stopped, it has no position to give any more
 			// only the audio is undone: the subtitle may have been changed in the menu while the request was pending
 			item.Selection = RestoreAudio(item.Selection, previousSelection);
@@ -319,8 +328,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Whether picking the stream changes what plays. The selection is set when a switch starts, so it is the stream to compare with
 	/// also while that switch is still loading: picking the stream that played before it supersedes the switch.
 	/// </summary>
-	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested) =>
-		requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
+	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested, bool loadFailed = false) =>
+		loadFailed || requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
+
+	/// <summary>A switch failed and the player is stopped: every pick is a switch, also the stream that played before.</summary>
+	private bool _loadFailed;
 
 	private bool TrySwitchInPlayer(PlaylistItem item, int streamIndex)
 	{

@@ -140,4 +140,15 @@ public sealed class VideoPlayerAudioTrackTests
 		Assert.Null(VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, null), null));
 		Assert.Equal(new PlaybackSelection(null, 9), VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, 9), null));
 	}
+
+	[Fact]
+	public void AfterAFailedSwitch_EveryPickIsASwitch_AlsoTheStreamThatPlayedBefore()
+	{
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
+
+		// the selection is back at 3 and nothing plays
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3, loadFailed: false));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3, loadFailed: true));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(null, playing, 3, loadFailed: true));
+	}
 }

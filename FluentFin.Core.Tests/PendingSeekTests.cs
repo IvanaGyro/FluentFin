@@ -90,4 +90,24 @@ public sealed class PendingSeekTests
 		await Task.Delay(100);
 		lock (seen) { Assert.Equal(count, seen.Count); }
 	}
+
+	[Fact]
+	public async Task TheReminders_StopWhenTheHeldPositionTimesOut()
+	{
+		var now = DateTimeOffset.UtcNow;
+		var seek = new PendingSeek(() => now);
+		var seen = new List<TimeSpan>();
+		using var subscription = seek.Reminders(TimeSpan.FromMilliseconds(20)).Subscribe(x => { lock (seen) { seen.Add(x); } });
+
+		seek.Set(TimeSpan.FromMinutes(8));
+		await Task.Delay(100);
+		now += PendingSeek.Timeout + TimeSpan.FromSeconds(1);
+		await Task.Delay(100);
+
+		Assert.Null(seek.Target);
+		int count;
+		lock (seen) { count = seen.Count; }
+		await Task.Delay(100);
+		lock (seen) { Assert.Equal(count, seen.Count); }
+	}
 }

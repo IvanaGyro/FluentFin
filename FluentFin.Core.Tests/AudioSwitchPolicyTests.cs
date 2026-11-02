@@ -61,4 +61,46 @@ public sealed class AudioSwitchPolicyTests
 	{
 		Assert.False(AudioSwitchPolicy.CanSwitchInPlayer(PlaybackProgressInfo_PlayMethod.DirectPlay, Source, index, Profile));
 	}
+
+	private static DeviceProfile WithAacLimits(bool required = false) => new()
+	{
+		DirectPlayProfiles = Profile.DirectPlayProfiles,
+		CodecProfiles =
+		[
+			new CodecProfile
+			{
+				Type = CodecProfile_Type.VideoAudio,
+				Codec = "aac",
+				Conditions =
+				[
+					new ProfileCondition { Condition = ProfileCondition_Condition.LessThanEqual, Property = ProfileCondition_Property.AudioChannels, Value = "6", IsRequired = required },
+					new ProfileCondition { Condition = ProfileCondition_Condition.LessThanEqual, Property = ProfileCondition_Property.AudioSampleRate, Value = "48000", IsRequired = required },
+				],
+			},
+		],
+	};
+
+	private static MediaSourceInfo SourceWithAac(int? channels, int? sampleRate) => new()
+	{
+		Container = "mkv",
+		MediaStreams = [new MediaStream { Index = 2, Type = MediaStream_Type.Audio, Codec = "aac", Channels = channels, SampleRate = sampleRate }],
+	};
+
+	[Theory]
+	[InlineData(6, 48000, true)]
+	[InlineData(2, 44100, true)]
+	[InlineData(8, 48000, false)]
+	[InlineData(6, 96000, false)]
+	public void TheLimitsOfTheCodecProfile_DecideWhetherThePlayerSwitches(int channels, int sampleRate, bool expected)
+	{
+		Assert.Equal(expected, AudioSwitchPolicy.CanSwitchInPlayer(PlaybackProgressInfo_PlayMethod.DirectPlay, SourceWithAac(channels, sampleRate), 2, WithAacLimits()));
+	}
+
+	[Theory]
+	[InlineData(false, true)]
+	[InlineData(true, false)]
+	public void AStreamWithoutTheValue_SwitchesInThePlayerUnlessTheProfileRequiresIt(bool required, bool expected)
+	{
+		Assert.Equal(expected, AudioSwitchPolicy.CanSwitchInPlayer(PlaybackProgressInfo_PlayMethod.DirectPlay, SourceWithAac(null, null), 2, WithAacLimits(required)));
+	}
 }
