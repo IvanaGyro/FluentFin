@@ -267,6 +267,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			? pending
 			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused);
 		_audioSwitch = state;
+		var previousSelection = item.Selection;
+		var previousMedia = item.Media;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
 		try
@@ -275,10 +277,26 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 		catch (Exception ex)
 		{
-			_audioSwitch = null;
 			logger.LogError(ex, "Unable to switch to audio stream {Index}", streamIndex);
 		}
+
+		// the request failed, the stream can be picked again
+		if (SwitchFailed(item.Selection, streamIndex, previousMedia, item.Media))
+		{
+			item.Selection = previousSelection;
+			if (ReferenceEquals(_audioSwitch, state))
+			{
+				_audioSwitch = null;
+			}
+		}
 	}
+
+	/// <summary>
+	/// A switch has failed when the media of the item was not replaced and no other pick has taken over the selection since,
+	/// which would have replaced it too.
+	/// </summary>
+	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, MediaResponse? before, MediaResponse? now) =>
+		selection?.AudioStreamIndex == requested && ReferenceEquals(before, now);
 
 	/// <summary>
 	/// Whether picking the stream changes what plays. The selection is set when a switch starts, so it is the stream to compare with

@@ -112,4 +112,15 @@ public sealed class VideoPlayerAudioTrackTests
 
 		Assert.Null(VideoPlayerViewModel.BuildSourceAudioMenu(single, 1, _ => { }));
 	}
+
+	[Fact]
+	public void ASwitch_HasFailed_WhenTheMediaWasNotReplaced()
+	{
+		var media = new MediaResponse(new Uri("http://localhost/a"), PlaybackProgressInfo_PlayMethod.Transcode, "s", "m", new MediaSourceInfo());
+
+		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media with { PlaybackSessionId = "t" }));
+		// another pick took over the selection
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, media, media));
+	}
 }
