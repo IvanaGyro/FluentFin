@@ -4,6 +4,8 @@ using DynamicData;
 using FluentFin.Core.Contracts.Services;
 using Microsoft.UI.Xaml.Controls;
 using ReactiveMarbles.ObservableEvents;
+using FluentFin.Core;
+using Microsoft.Extensions.Logging;
 using Windows.Media.Core;
 
 namespace FluentFin.MediaPlayers
@@ -28,14 +30,27 @@ namespace FluentFin.MediaPlayers
 		private readonly Windows.Media.Playback.MediaPlayer _mp = new() { AutoPlay = false };
 		private Windows.Media.Playback.MediaPlaybackItem? _mediaItem;
 		private int? _pendingAudioOrdinal;
+		private int? _wantedAudioOrdinal;
 		private readonly Button _audioTracksButton;
+		private readonly ILogger _logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
 
 		public WindowsMediaPlayerController(MediaPlayerElement element, Button audioTracksButton)
 		{
 			_audioTracksButton = audioTracksButton;
 			element.AreTransportControlsEnabled = false;
 			element.SetMediaPlayer(_mp);
-			_mp.MediaFailed += (_, e) => LastError = $"{e.Error}: {e.ErrorMessage} (HRESULT 0x{e.ExtendedErrorCode?.HResult ?? 0:X8})";
+			_mp.MediaFailed += (_, e) =>
+			{
+				LastError = $"{e.Error}: {e.ErrorMessage} (HRESULT 0x{e.ExtendedErrorCode?.HResult ?? 0:X8})";
+				_logger.LogError("Media failed: {Error}", LastError);
+			};
+			_mp.MediaOpened += (_, _) =>
+			{
+				_logger.LogInformation("Media opened: duration={Duration}, volume={Volume}, muted={Muted}", _mp.SafeGetValue(m => m.NaturalDuration, TimeSpan.Zero), Volume, IsMuted);
+				// the tracks can still be settling when they are first announced, the choice is made again once the media is open
+				_audioTracksButton.DispatcherQueue.TryEnqueue(() => SelectWantedAudioTrack("media opened"));
+			};
+			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}", s.PlaybackState);
 		}
 
 		public string? LastError { get; private set; }
@@ -106,7 +121,9 @@ namespace FluentFin.MediaPlayers
 				return;
 			}
 
+			_logger.LogInformation("Selecting audio track {Index} of {Count} (selected before: {Before})", index, _mediaItem.AudioTracks.Count, _mediaItem.AudioTracks.SelectedIndex);
 			_mediaItem.AudioTracks.SelectedIndex = index;
+			_logger.LogInformation("Selected audio track is now {After}", _mediaItem.AudioTracks.SelectedIndex);
 		}
 
 		public void OpenExternalSubtitleTrack(string url)
@@ -183,17 +200,62 @@ namespace FluentFin.MediaPlayers
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
 			_pendingAudioOrdinal = audioTrackOrdinal;
+			_wantedAudioOrdinal = audioTrackOrdinal;
 			LastError = null;
+			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
 			var source = MediaSource.CreateFromUri(uri);
 			_mediaItem = new Windows.Media.Playback.MediaPlaybackItem(source);
 			_mediaItem.AudioTracksChanged += (sender, args) => _audioTracksButton.DispatcherQueue.TryEnqueue(() =>
 			{
+				LogAudioTracks();
 				_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, defaultAudioIndex);
 				ApplyPendingAudioTrack();
 			});
 			_mp.Source = _mediaItem;
 			_mp.Play();
 			return true;
+		}
+
+		private void LogAudioTracks()
+		{
+			if (_mediaItem is null)
+			{
+				return;
+			}
+
+			_logger.LogInformation("Audio tracks changed: {Count} tracks, selected={Selected}", _mediaItem.AudioTracks.Count, _mediaItem.AudioTracks.SelectedIndex);
+			foreach (var (track, index) in _mediaItem.AudioTracks.Select((t, i) => (t, i)))
+			{
+				try
+				{
+					var encoding = track.GetEncodingProperties();
+					_logger.LogInformation(
+						"Audio track #{Index}: language={Language}, label={Label}, subtype={Subtype}, channels={Channels}, sampleRate={SampleRate}, bitrate={Bitrate}, decoder={Decoder}, source={Status}",
+						index, track.Language, track.Label, encoding.Subtype, encoding.ChannelCount, encoding.SampleRate, encoding.Bitrate, track.SupportInfo.DecoderStatus, track.SupportInfo.MediaSourceStatus);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogWarning(ex, "Audio track #{Index}: unable to read its properties", index);
+				}
+			}
+		}
+
+		/// <summary>Selects the wanted audio track again, a track that is only selected by default has been seen to stay silent until it is picked.</summary>
+		private void SelectWantedAudioTrack(string reason)
+		{
+			if (_mediaItem is null || _mediaItem.AudioTracks.Count == 0)
+			{
+				return;
+			}
+
+			var index = _wantedAudioOrdinal ?? Math.Max(0, _mediaItem.AudioTracks.SelectedIndex);
+			if (index >= _mediaItem.AudioTracks.Count)
+			{
+				return;
+			}
+
+			_logger.LogInformation("Selecting the audio track again ({Reason}): {Index}", reason, index);
+			OpenAudioTrack(index);
 		}
 
 		private void ApplyPendingAudioTrack()
@@ -206,6 +268,7 @@ namespace FluentFin.MediaPlayers
 			var tracks = GetAudioTracks().ToList();
 			if (ordinal < 0 || ordinal >= tracks.Count)
 			{
+				_logger.LogWarning("Not selecting the audio track: ordinal {Ordinal} of {Count} tracks", ordinal, tracks.Count);
 				return;
 			}
 
@@ -227,6 +290,7 @@ namespace FluentFin.MediaPlayers
 		/// </summary>
 		public void Stop()
 		{
+			_logger.LogInformation("Stopping, releasing the media source");
 			try
 			{
 				_mp.Pause();

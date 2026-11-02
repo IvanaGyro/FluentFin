@@ -272,10 +272,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var previousSelection = item.Selection;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
+		logger.LogInformation("Audio switch #{Request}: stream {Index} for {Name}, resume at {Ticks}, paused={Paused}, previous selection={Previous}",
+			request, streamIndex, item.Dto.Name, state.Ticks, state.Paused, previousSelection);
+
 		var loaded = false;
 		try
 		{
 			loaded = await LoadSelectedItem(state.Ticks, state.Paused);
+			logger.LogInformation("Audio switch #{Request}: load ended, playing={Loaded}, play method={PlayMethod}", request, loaded, item.Media?.PlayMethod);
 		}
 		catch (Exception ex)
 		{
@@ -359,7 +363,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
-		MediaPlayer.SourceAudioMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, index => SwitchAudioStream(selectedItem, index));
+		var sourceMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, index => SwitchAudioStream(selectedItem, index));
+		MediaPlayer.SourceAudioMenu = sourceMenu;
+		logger.LogInformation("Audio menu: {Count} source audio streams, selected stream {Selected}", sourceMenu?.Tracks.Count ?? 0, sourceMenu?.SelectedId);
 		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
