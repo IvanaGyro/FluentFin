@@ -17,7 +17,10 @@ env:
   MAIN_PROJECT_PATH: 'FluentFin\FluentFin.csproj'
   PUBLISH_FOLDER: 'FluentFin\bin\publish'
   PUBLISH_FOLDER_ARM64: 'FluentFin\bin\publish-arm64'
-  FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl-shared.zip
+  # pinned BtbN build of the FFmpeg 9.0 release branch, the same as ci_deploy.yml: Flyleaf.FFmpeg.ABI 9.0.0 mirrors the
+  # 9.0 structs, and FFmpeg master builds (ffmpeg-master-latest) crash Flyleaf's audio decoder on the first frame
+  FFMPEG_ARM64_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-01-12-49/ffmpeg-n9.0.2-42-gd7643a0fe3-winarm64-gpl-shared-9.0.zip
+  FFMPEG_ARM64_SHA256: 233083531d51a4bf53fe5c1a58266ccdee90c25aee113c58f49ca0769dec7ef7
   CTK_LABS_INDEX: https://pkgs.dev.azure.com/dotnet/CommunityToolkit/_packaging/CommunityToolkit-Labs/nuget/v3/index.json
   # NuGet packages on the runner's D: drive, where the workspace is
   NUGET_PACKAGES: 'D:\nuget-packages'
@@ -69,6 +72,7 @@ jobs:
       shell: pwsh
       run: |
         Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
+        if ((Get-FileHash ffmpeg-arm64.zip -Algorithm SHA256).Hash -ne $env:FFMPEG_ARM64_SHA256) { throw 'arm64 FFmpeg checksum mismatch' }
         Expand-Archive ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64
         New-Item -ItemType Directory -Force FluentFin\FFMpeg-arm64 | Out-Null
         foreach ($x64 in Get-ChildItem FluentFin\FFMpeg\*.dll) {
@@ -170,6 +174,7 @@ jobs:
       shell: pwsh
       run: |
         Invoke-WebRequest $env:FFMPEG_ARM64_URL -OutFile ffmpeg-arm64.zip
+        if ((Get-FileHash ffmpeg-arm64.zip -Algorithm SHA256).Hash -ne $env:FFMPEG_ARM64_SHA256) { throw 'arm64 FFmpeg checksum mismatch' }
         Expand-Archive ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64
         New-Item -ItemType Directory -Force FluentFin\FFMpeg-arm64 | Out-Null
         foreach ($x64 in Get-ChildItem FluentFin\FFMpeg\*.dll) {
