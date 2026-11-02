@@ -30,6 +30,7 @@ namespace FluentFin.MediaPlayers
 		private readonly Windows.Media.Playback.MediaPlayer _mp = new() { AutoPlay = false };
 		private Windows.Media.Playback.MediaPlaybackItem? _mediaItem;
 		private int? _wantedAudioOrdinal;
+		private volatile bool _opened;
 		private readonly Button _audioTracksButton;
 		private readonly WmpSeeker _seeker;
 		private readonly ILogger _logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
@@ -50,6 +51,7 @@ namespace FluentFin.MediaPlayers
 				_logger.LogInformation("Media opened: duration={Duration}, volume={Volume}, muted={Muted}", _mp.SafeGetValue(m => m.NaturalDuration, TimeSpan.Zero), Volume, IsMuted);
 				_audioTracksButton.DispatcherQueue.TryEnqueue(() =>
 				{
+					_opened = true;
 					SelectWantedAudioTrack("media opened");
 					_seeker.NotifyOpened();
 				});
@@ -125,6 +127,15 @@ namespace FluentFin.MediaPlayers
 				return;
 			}
 
+			// A track selected before the media is open shows as selected and plays no sound (WmpAudioPlaybackTests). The pick replaces the
+			// track the item was to start with, and is made once the media is open.
+			if (!_opened)
+			{
+				_logger.LogInformation("Audio track {Index} picked before the media is open, selecting it once it is", index);
+				_wantedAudioOrdinal = index;
+				return;
+			}
+
 			_logger.LogInformation("Selecting audio track {Index} of {Count} (selected before: {Before})", index, _mediaItem.AudioTracks.Count, _mediaItem.AudioTracks.SelectedIndex);
 			_mediaItem.AudioTracks.SelectedIndex = index;
 			_logger.LogInformation("Selected audio track is now {After}", _mediaItem.AudioTracks.SelectedIndex);
@@ -177,6 +188,7 @@ namespace FluentFin.MediaPlayers
 
 		public void Pause()
 		{
+			_seeker.PlayRequested = false;
 			_seeker.CancelPlayWhenSeeked();
 			try
 			{
@@ -187,6 +199,7 @@ namespace FluentFin.MediaPlayers
 
 		public bool Play()
 		{
+			_seeker.PlayRequested = true;
 			_seeker.CancelPlayWhenSeeked();
 			try
 			{
@@ -206,6 +219,8 @@ namespace FluentFin.MediaPlayers
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
 			_wantedAudioOrdinal = audioTrackOrdinal;
+			_opened = false;
+			_seeker.PlayRequested = true;
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
 			var source = MediaSource.CreateFromUri(uri);

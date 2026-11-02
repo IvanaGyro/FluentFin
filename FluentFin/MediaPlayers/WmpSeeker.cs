@@ -64,8 +64,11 @@ internal sealed class WmpSeeker
 		try
 		{
 			_mp.Pause();
-			_playWhenSeeked = true;
-			_ = PlayAnywayLater();
+			_playWhenSeeked = PlayRequested;
+			if (_playWhenSeeked)
+			{
+				_ = PlayAnywayLater();
+			}
 		}
 		catch
 		{
@@ -87,6 +90,12 @@ internal sealed class WmpSeeker
 	public void CancelPlayWhenSeeked() => _playWhenSeeked = false;
 
 	private volatile bool _playWhenSeeked;
+
+	/// <summary>
+	/// Whether the app wants the media to play, as it asked for last. A seek that has to wait pauses the player, and then plays only
+	/// if the app wanted to play: a pause of the user is kept.
+	/// </summary>
+	public volatile bool PlayRequested;
 
 	private void PlayIfWaiting()
 	{
@@ -121,6 +130,7 @@ internal sealed class WmpSeeker
 		if (_seek.Target is { } target && _seek.NeedsSeek(reported) && CanSeekNow)
 		{
 			SetPosition(target);
+			PlayIfWaiting();
 		}
 	}
 

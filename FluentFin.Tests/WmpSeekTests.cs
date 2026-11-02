@@ -39,6 +39,7 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 
 		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
 		player.Play();
+		seeker.PlayRequested = true;
 		seeker.SeekTo(Target);
 
 		await Task.Delay(TimeSpan.FromSeconds(4));
@@ -58,6 +59,31 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		Assert.NotEmpty(shown);
 		Assert.True(shown.All(x => x >= Target - TimeSpan.FromSeconds(2)), "the time bar was given " + string.Join(", ", shown.Where(x => x < Target - TimeSpan.FromSeconds(2))));
 		Assert.True(seeker.Position >= Target - TimeSpan.FromSeconds(2), $"the player is at {seeker.Position}, the seek was to {Target}");
+	}
+
+	/// <summary>A pause of the user is kept when the seek has to wait for the media to open.</summary>
+	[Fact]
+	public async Task APausedPlayer_StaysPaused_WhenTheSeekWaitsForTheMediaToOpen()
+	{
+		using var server = new LocalHls(Path.Combine(AppContext.BaseDirectory, "Media", "hls"));
+		using var player = new MediaPlayer { AutoPlay = false };
+		var seeker = new WmpSeeker(player);
+		player.MediaOpened += (_, _) => seeker.NotifyOpened();
+
+		// the app asked for the pause after it asked to play, as an audio switch of a paused item does
+		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
+		player.Play();
+		seeker.PlayRequested = true;
+		seeker.SeekTo(Target);
+		seeker.PlayRequested = false;
+		seeker.CancelPlayWhenSeeked();
+		player.Pause();
+
+		await Task.Delay(TimeSpan.FromSeconds(4));
+
+		output.WriteLine($"state={player.PlaybackSession.PlaybackState}, position={player.PlaybackSession.Position:g}");
+		Assert.NotEqual(MediaPlaybackState.Playing, player.PlaybackSession.PlaybackState);
+		Assert.True(player.PlaybackSession.Position >= Target - TimeSpan.FromSeconds(1), $"the player is at {player.PlaybackSession.Position}");
 	}
 
 	/// <summary>What the controller did before: the position is set when asked, whatever the player can do. Reported, not asserted.</summary>
@@ -135,6 +161,7 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 
 		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url));
 		player.Play();
+		seeker.PlayRequested = true;
 		seeker.SeekTo(Target);
 		await Task.Delay(TimeSpan.FromSeconds(4));
 
