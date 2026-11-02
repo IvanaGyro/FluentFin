@@ -141,7 +141,7 @@ namespace FluentFin.MediaPlayers
 
 		private void ApplyPendingSeek(TimeSpan reported)
 		{
-			if (_seek.Target is { } target && reported < target - PendingSeek.Tolerance && _mp.IsSeekable)
+			if (_seek.Target is { } target && _seek.NeedsSeek(reported) && _mp.IsSeekable)
 			{
 				_mp.SeekTo(target);
 			}

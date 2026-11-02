@@ -266,10 +266,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
 		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
 			? pending
-			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused);
+			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused, item.Selection);
 		_audioSwitch = state;
 		var request = ++_audioSwitchRequest;
-		var previousSelection = item.Selection;
+		// what played before the chain of picks began, not the selection of a pick that was superseded
+		var previousSelection = state.PreviousSelection;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
 
 		logger.LogInformation("Audio switch #{Request}: stream {Index} for {Name}, resume at {Ticks}, paused={Paused}, previous selection={Previous}",
@@ -314,7 +315,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested) =>
 		requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
 
-	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused);
+	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused, PlaybackSelection? PreviousSelection);
 
 	private AudioSwitchState? _audioSwitch;
 
