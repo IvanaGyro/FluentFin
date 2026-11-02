@@ -118,9 +118,11 @@ public sealed class VideoPlayerAudioTrackTests
 	{
 		var media = new MediaResponse(new Uri("http://localhost/a"), PlaybackProgressInfo_PlayMethod.Transcode, "s", "m", new MediaSourceInfo());
 
-		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media));
-		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media with { PlaybackSessionId = "t" }));
+		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media, 1, 1));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media with { PlaybackSessionId = "t" }, 1, 1));
 		// another pick took over the selection
-		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, media, media));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, media, media, 1, 1));
+		// a newer pick, also for the same stream, is in flight: this one was superseded
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, media, media, 1, 3));
 	}
 }

@@ -249,9 +249,10 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Asks the server for the item again with the audio stream picked in the menu, which transcodes or plays it directly
 	/// as the stream requires, and continues at the current position.
 	/// </summary>
-	private async void SwitchAudioStream(int streamIndex)
+	private async void SwitchAudioStream(PlaylistItem item, int streamIndex)
 	{
-		if (Playlist.SelectedItem is not { } item || MediaPlayer is null)
+		// the menu of the previous item stays until the tracks of the new one arrive, a pick on it is not for the current item
+		if (!ReferenceEquals(Playlist.SelectedItem, item) || MediaPlayer is null)
 		{
 			return;
 		}
@@ -267,6 +268,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			? pending
 			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused);
 		_audioSwitch = state;
+		var request = ++_audioSwitchRequest;
 		var previousSelection = item.Selection;
 		var previousMedia = item.Media;
 		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
@@ -281,7 +283,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		// the request failed, the stream can be picked again
-		if (SwitchFailed(item.Selection, streamIndex, previousMedia, item.Media))
+		if (SwitchFailed(item.Selection, streamIndex, previousMedia, item.Media, request, _audioSwitchRequest))
 		{
 			item.Selection = previousSelection;
 			if (ReferenceEquals(_audioSwitch, state))
@@ -295,8 +297,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// A switch has failed when the media of the item was not replaced and no other pick has taken over the selection since,
 	/// which would have replaced it too.
 	/// </summary>
-	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, MediaResponse? before, MediaResponse? now) =>
-		selection?.AudioStreamIndex == requested && ReferenceEquals(before, now);
+	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, MediaResponse? before, MediaResponse? now, int request, int latestRequest) =>
+		request == latestRequest && selection?.AudioStreamIndex == requested && ReferenceEquals(before, now);
+
+	/// <summary>Numbers the picks, only the latest one may undo the selection, an older one that ends later was superseded and did not fail.</summary>
+	private int _audioSwitchRequest;
 
 	/// <summary>
 	/// Whether picking the stream changes what plays. The selection is set when a switch starts, so it is the stream to compare with
@@ -354,7 +359,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
-		MediaPlayer.SourceAudioMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, SwitchAudioStream);
+		MediaPlayer.SourceAudioMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, index => SwitchAudioStream(selectedItem, index));
 		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
