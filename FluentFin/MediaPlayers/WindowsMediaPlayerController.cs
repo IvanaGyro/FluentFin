@@ -29,7 +29,6 @@ namespace FluentFin.MediaPlayers
 	{
 		private readonly Windows.Media.Playback.MediaPlayer _mp = new() { AutoPlay = false };
 		private Windows.Media.Playback.MediaPlaybackItem? _mediaItem;
-		private int? _pendingAudioOrdinal;
 		private int? _wantedAudioOrdinal;
 		private readonly Button _audioTracksButton;
 		private readonly ILogger _logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
@@ -47,7 +46,6 @@ namespace FluentFin.MediaPlayers
 			_mp.MediaOpened += (_, _) =>
 			{
 				_logger.LogInformation("Media opened: duration={Duration}, volume={Volume}, muted={Muted}", _mp.SafeGetValue(m => m.NaturalDuration, TimeSpan.Zero), Volume, IsMuted);
-				// the tracks can still be settling when they are first announced, the choice is made again once the media is open
 				_audioTracksButton.DispatcherQueue.TryEnqueue(() => SelectWantedAudioTrack("media opened"));
 			};
 			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}", s.PlaybackState);
@@ -199,7 +197,6 @@ namespace FluentFin.MediaPlayers
 
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
-			_pendingAudioOrdinal = audioTrackOrdinal;
 			_wantedAudioOrdinal = audioTrackOrdinal;
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
@@ -209,7 +206,6 @@ namespace FluentFin.MediaPlayers
 			{
 				LogAudioTracks();
 				_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, defaultAudioIndex);
-				ApplyPendingAudioTrack();
 			});
 			_mp.Source = _mediaItem;
 			_mp.Play();
@@ -240,40 +236,28 @@ namespace FluentFin.MediaPlayers
 			}
 		}
 
-		/// <summary>Selects the wanted audio track again, a track that is only selected by default has been seen to stay silent until it is picked.</summary>
+		/// <summary>
+		/// Selects the audio track the item is to play, once the media is open. A track selected while the tracks are announced
+		/// (AudioTracksChanged) shows as selected, with a decoder that supports it, and plays no sound at all, measured on the
+		/// audio device (WmpAudioPlaybackTests). Selecting it once the media is open, or later, does.
+		/// </summary>
 		private void SelectWantedAudioTrack(string reason)
 		{
-			if (_mediaItem is null || _mediaItem.AudioTracks.Count == 0)
-			{
-				return;
-			}
-
-			var index = _wantedAudioOrdinal ?? Math.Max(0, _mediaItem.AudioTracks.SelectedIndex);
-			if (index >= _mediaItem.AudioTracks.Count)
-			{
-				return;
-			}
-
-			_logger.LogInformation("Selecting the audio track again ({Reason}): {Index}", reason, index);
-			OpenAudioTrack(index);
-		}
-
-		private void ApplyPendingAudioTrack()
-		{
-			if (_pendingAudioOrdinal is not { } ordinal)
+			if (_mediaItem is null || _wantedAudioOrdinal is not { } index)
 			{
 				return;
 			}
 
 			var tracks = GetAudioTracks().ToList();
-			if (ordinal < 0 || ordinal >= tracks.Count)
+			if (index < 0 || index >= tracks.Count)
 			{
-				_logger.LogWarning("Not selecting the audio track: ordinal {Ordinal} of {Count} tracks", ordinal, tracks.Count);
+				_logger.LogWarning("Not selecting the audio track: ordinal {Ordinal} of {Count} tracks", index, tracks.Count);
 				return;
 			}
 
-			_pendingAudioOrdinal = null;
-			OpenAudioTrack(tracks[ordinal].Id);
+			_wantedAudioOrdinal = null;
+			_logger.LogInformation("Selecting the audio track ({Reason}): {Index}", reason, index);
+			OpenAudioTrack(tracks[index].Id);
 		}
 
 		public void SeekTo(TimeSpan timeSpan)

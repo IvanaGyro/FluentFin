@@ -103,13 +103,16 @@ public sealed class WmpAudioPlaybackTests(ITestOutputHelper output)
 		// the menu of ivana-main: the track picked while the media plays
 		await Scenario("track 2 picked 1s after playing", false, 2, null, null, async item => { await Task.Delay(1000); item.AudioTracks.SelectedIndex = 2; });
 
-		// the app: the choice is made when the tracks are announced
-		await Scenario("track 2 picked when the tracks are announced", false, 2, item => item.AudioTracks.SelectedIndex = 2, null, null);
-		await Scenario("track 2 picked when the tracks are announced, reused player", true, 2, item => item.AudioTracks.SelectedIndex = 2, null, null);
+		// what the app did: the choice is made when the tracks are announced, which Windows Media Player takes for a choice and plays no sound
+		// (reported, not asserted: it is a fault of the platform that the controller has to avoid)
+		await Scenario("silent expected: track 2 picked when the tracks are announced", false, 2, item => item.AudioTracks.SelectedIndex = 2, null, null);
+		await Scenario("silent expected: track 2 picked when the tracks are announced, reused player", true, 2, item => item.AudioTracks.SelectedIndex = 2, null, null);
 
-		// this branch: the choice is made again when the media is open
-		await Scenario("track 2 picked when announced and when opened", false, 2, item => item.AudioTracks.SelectedIndex = 2, item => item.AudioTracks.SelectedIndex = 2, null);
-		await Scenario("track 2 picked when announced and when opened, reused player", true, 2, item => item.AudioTracks.SelectedIndex = 2, item => item.AudioTracks.SelectedIndex = 2, null);
+		// the choice made again when the media is open does nothing, it is the same index
+		await Scenario("silent expected: track 2 picked when announced and when opened", false, 2, item => item.AudioTracks.SelectedIndex = 2, item => item.AudioTracks.SelectedIndex = 2, null);
+		await Scenario("silent expected: track 2 picked when announced and when opened, reused player", true, 2, item => item.AudioTracks.SelectedIndex = 2, item => item.AudioTracks.SelectedIndex = 2, null);
+		await Scenario("track 2 picked when opened", false, 2, null, item => item.AudioTracks.SelectedIndex = 2, null);
+		// what the controller does now: the choice is made once the media is open
 		await Scenario("track 2 picked when opened, reused player", true, 2, null, item => item.AudioTracks.SelectedIndex = 2, null);
 
 		// the choice, and then the same one again a moment later
