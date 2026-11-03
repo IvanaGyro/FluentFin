@@ -362,6 +362,12 @@ namespace FluentFin.MediaPlayers
 		/// </summary>
 		public void SeekTo(TimeSpan time)
 		{
+			// the start is the earliest a seek can go: a target before it is never reached and would hold the time bar there
+			if (time < TimeSpan.Zero)
+			{
+				time = TimeSpan.Zero;
+			}
+
 			_holding = false;
 			var sameTarget = _seek.Target == time;
 			_seek.Set(time);

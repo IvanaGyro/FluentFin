@@ -87,7 +87,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Releases the player's media source and reports the current playback session as stopped, which makes the server
 	/// end its transcoding job. Safe to call repeatedly, only the first call for a session has an effect.
 	/// </summary>
-	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null, bool reloading = false)
+	/// <param name="play">For a reload: whether the media that is loaded next is to play, set once the position is held, so that a
+	/// pause or play of the user while the server answers is still the last word.</param>
+	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null, bool reloading = false, bool play = true)
 	{
 		var session = Interlocked.Exchange(ref _session, null);
 		long? position = null;
@@ -103,6 +105,14 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 				{
 					// pause in place and keep the current frame and position while the server prepares the new stream
 					MediaPlayer?.HoldPosition(holdPosition ?? TimeSpan.Zero);
+					if (play)
+					{
+						MediaPlayer?.Play();
+					}
+					else
+					{
+						MediaPlayer?.Pause();
+					}
 				}
 				else
 				{
@@ -379,13 +389,32 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		return new PlaybackSelection(previous?.AudioStreamIndex, current?.SubtitleStreamIndex ?? previous?.SubtitleStreamIndex);
 	}
 
+	/// <summary>
+	/// The player failed after it accepted the media, which is how a stream that cannot be opened fails for the players that open it in
+	/// the background (Windows Media Player, VLC): as when the request fails, a pick in the audio menu loads the item again, the stream
+	/// that failed too, at the position it was to play at, paused or not as it was. Read before the player is stopped, which forgets it.
+	/// </summary>
+	private void KeepForRetry()
+	{
+		if (Playlist.SelectedItem is not { } item || MediaPlayer is not { } mp)
+		{
+			return;
+		}
+
+		long? ticks = mp.Position.Ticks is > 0 and var position ? position : null;
+		var previous = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item) ? pending : null;
+		_audioSwitch = new AudioSwitchState(item, ticks ?? previous?.Ticks, previous?.Paused ?? !mp.IsPlaying, previous?.PreviousSelection ?? item.Selection);
+		_loadFailed = true;
+		logger.LogInformation("Playback failed, a pick in the audio menu loads {Name} again at {Ticks}, paused={Paused}", item.Dto.Name, _audioSwitch.Ticks, _audioSwitch.Paused);
+	}
+
 	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused, PlaybackSelection? PreviousSelection);
 
 	private AudioSwitchState? _audioSwitch;
 
 	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
-	/// <param name="startPaused">Whether to pause again once loaded, for the same reload.</param>
-	internal async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
+	/// <param name="startPaused">For the same reload: whether it stays paused. Null for another item, which plays.</param>
+	internal async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool? startPaused = null)
 	{
 		if (MediaPlayer is null)
 		{
@@ -401,20 +430,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		var startTicks = resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
 		TimeSpan? hold = startTicks is > 0 ? TimeSpan.FromTicks(startTicks.Value) : null;
 
-		if (resumeTicks is not null)
-		{
-			if (startPaused)
-			{
-				MediaPlayer.Pause();
-			}
-			else if (!MediaPlayer.IsPlaying)
-			{
-				MediaPlayer.Play();
-			}
-		}
-
-		// clean up the previous session first, whether or not the new media can be loaded
-		await StopPlayback(holdPosition: hold, reloading: true);
+		// clean up the previous session first, whether or not the new media can be loaded. Another item plays (the player stopped
+		// at the end of the previous one, that is no pause of the user), the same item loaded again keeps playing or stays paused
+		await StopPlayback(holdPosition: hold, reloading: true, play: startPaused is not true);
 
 		// the teardown takes a round trip to the server: another load may have started and finished meanwhile, the player is its
 		if (version != _loadVersion)
@@ -754,6 +772,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			// described before the session is stopped, the backends do not report what went wrong
 			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
+			KeepForRetry();
 			await StopPlayback();
 		});
 		mp.PositionChanged

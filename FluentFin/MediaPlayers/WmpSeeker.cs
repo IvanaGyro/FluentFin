@@ -236,12 +236,23 @@ internal sealed class WmpSeeker
 
 	public void SeekTo(TimeSpan time)
 	{
+		// the start is the earliest a seek can go: a target before it is never reached and would hold the time bar there
+		if (time < TimeSpan.Zero)
+		{
+			time = TimeSpan.Zero;
+		}
+
+		bool opened;
 		lock (_gate)
 		{
 			_holding = false;
+			opened = _opened;
 		}
 
-		if (CanSeekNow)
+		// The media is open, it can seek now, or it buffers (after a seek to a part the server has not sent yet) and does not open again:
+		// the seek is not deferred to the opening and the player is not paused for it.
+		var canSeek = CanSeekNow;
+		if (canSeek || opened)
 		{
 			if (!IsVideoVisible)
 			{
@@ -263,7 +274,17 @@ internal sealed class WmpSeeker
 				_seekRequested = false;
 			}
 
-			_seek.Clear();
+			if (canSeek)
+			{
+				_seek.Clear();
+			}
+			else
+			{
+				// held until the player is there, and made again by the position events if it did not take it while it buffered
+				_seek.Set(time);
+				_shown.OnNext(time);
+			}
+
 			SetPosition(time);
 			return;
 		}

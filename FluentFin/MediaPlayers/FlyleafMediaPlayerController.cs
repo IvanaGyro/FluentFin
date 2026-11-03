@@ -274,10 +274,19 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public void SeekTo(TimeSpan timeSpan)
 	{
+		// the start is the earliest a seek can go: a target before it is never reached and would hold the time bar there
+		if (timeSpan < TimeSpan.Zero)
+		{
+			timeSpan = TimeSpan.Zero;
+		}
+
 		_holding = false;
+		// only a seek that is still on its way is not made twice: once the player was at the target (which ends the pending seek), a seek
+		// to the same position is a new one
+		var outstanding = _lastSeekIssued == timeSpan && _seek.Target == timeSpan;
 		_seek.Set(timeSpan);
 		_seekPosition.OnNext(timeSpan);
-		if (_hasMedia && _isPlaying && _lastSeekIssued != timeSpan)
+		if (_hasMedia && _isPlaying && !outstanding)
 		{
 			_lastSeekIssued = timeSpan;
 			_mp.SeekAccurate((int)timeSpan.TotalMilliseconds);
