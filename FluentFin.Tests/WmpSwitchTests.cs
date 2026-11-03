@@ -15,8 +15,8 @@ namespace FluentFin.Tests;
 /// decoders of a machine) lists AAC and not DTS, and the server transcodes what the profile does not list (<c>hls-d0</c> and
 /// <c>hls-d1</c> are the transcodes of D1 and D2, to AAC). Direct to direct is the player's own switch, as the view model decides it
 /// (<see cref="AudioSwitchPolicy"/>); the others open another stream and resume at the position the item was at.
-/// What is looked at: the position given to the time bar, every video frame the player produces and whether it would have been shown,
-/// and the sound that reaches the audio device.
+/// What is looked at: the position given to the time bar, every video frame the player produces and the frame held on its surface when
+/// the video is shown, and the sound that reaches the audio device.
 /// </summary>
 [Collection(AudioDevice.Name)]
 public sealed class WmpSwitchTests(ITestOutputHelper output)
@@ -89,6 +89,63 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 	[InlineData("D1", "D2")]
 	public Task SwitchingToATranscode_WithASlowServer_NeverShowsTheStartOfTheMedia(string fromName, string toName) => Switching(fromName, toName, TimeSpan.FromSeconds(5));
 
+	/// <summary>
+	/// Setting the position in <see cref="WmpSeeker.SeekTo"/> while the media is still opening makes Windows Media Player preroll the
+	/// frame at the resume position directly instead of prerolling the first frame of the stream (0:00:00) on <c>MediaOpened</c>.
+	/// </summary>
+	[Fact]
+	public async Task OnATranscode_SeekingWhileOpening_PrerollsTheResumeFrameAndNeverProducesTheStartFrame()
+	{
+		var resume = TimeSpan.FromSeconds(6);
+		using var server = new FakeMediaServer(Path.Combine(AppContext.BaseDirectory, "Media", "switch"), ServerDelay);
+		using var player = new MediaPlayer { AutoPlay = false };
+		var seeker = new WmpSeeker(player);
+
+		var sync = new object();
+		TimeSpan? lastFrame = null;
+		TimeSpan? frameWhenShown = null;
+		var allFrames = new List<TimeSpan>();
+
+		player.IsVideoFrameServerEnabled = true;
+		player.VideoFrameAvailable += (s, _) =>
+		{
+			lock (sync)
+			{
+				lastFrame = s.PlaybackSession.Position;
+				allFrames.Add(s.PlaybackSession.Position);
+			}
+		};
+		using var sub = seeker.VideoVisibleChanged.Subscribe(visible =>
+		{
+			if (visible)
+			{
+				lock (sync) { frameWhenShown ??= lastFrame; }
+			}
+		});
+		player.MediaOpened += (_, _) => seeker.NotifyOpened();
+
+		seeker.BeginLoading();
+		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url(D1.Hls!)));
+		player.Play();
+		seeker.PlayRequested = true;
+		seeker.SeekTo(resume);
+
+		var end = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+		while (DateTime.UtcNow < end && !seeker.IsVideoVisible)
+		{
+			await Task.Delay(50);
+		}
+
+		List<TimeSpan> frames;
+		lock (sync) { frames = [.. allFrames]; }
+		output.WriteLine($"when video shown: frame on surface={frameWhenShown}, frames=[{string.Join(", ", frames.Select(x => x.TotalSeconds.ToString("0.0")))}]");
+
+		Assert.NotEmpty(frames);
+		Assert.True(frames.All(x => x >= resume - TimeSpan.FromSeconds(1)), $"the player produced a start frame: {string.Join(", ", frames.Where(x => x < resume - TimeSpan.FromSeconds(1)))}");
+		Assert.NotNull(frameWhenShown);
+		Assert.True(frameWhenShown >= resume - TimeSpan.FromSeconds(1), $"expected a frame at {resume} on the surface when the video is shown, found {frameWhenShown}");
+	}
+
 	private async Task Switching(string fromName, string toName, TimeSpan segmentDelay)
 	{
 		var from = ByName(fromName);
@@ -140,7 +197,9 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 		private readonly List<TimeSpan> _timeBar = [];
 		private readonly List<(bool Shown, TimeSpan Position)> _frames = [];
 		private readonly IDisposable _timeBarSubscription;
+		private readonly IDisposable _visibleSubscription;
 		private MediaPlaybackItem? _item;
+		private TimeSpan? _lastFrame;
 		private volatile bool _recording;
 
 		public Session(FakeMediaServer server, ITestOutputHelper output)
@@ -160,11 +219,32 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 			_player.IsVideoFrameServerEnabled = true;
 			_player.VideoFrameAvailable += (s, _) =>
 			{
-				if (_recording)
+				var position = s.PlaybackSession.Position;
+				lock (_frames)
 				{
-					lock (_frames) { _frames.Add((Seeker.IsVideoVisible, s.PlaybackSession.Position)); }
+					_lastFrame = position;
+					if (_recording)
+					{
+						_frames.Add((Seeker.IsVideoVisible, position));
+					}
 				}
 			};
+			_visibleSubscription = Seeker.VideoVisibleChanged.Subscribe(visible =>
+			{
+				if (!visible || !_recording)
+				{
+					return;
+				}
+
+				// the surface holds the last frame the player produced: showing the element shows that frame until a new one arrives
+				lock (_frames)
+				{
+					if (_lastFrame is { } held)
+					{
+						_frames.Add((true, held));
+					}
+				}
+			});
 			_player.MediaOpened += (_, _) => Opened?.Invoke();
 		}
 
@@ -241,9 +321,9 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 
 			lock (_frames)
 			{
-				// a frame of the start of the media is produced while the player gets there; it must not be shown
-				var shownEarly = _frames.Where(x => x.Shown && x.Position < early).ToList();
-				Assert.True(shownEarly.Count == 0, $"{name}: the video showed {shownEarly.Count} frames of the start of the media: {string.Join(", ", shownEarly.Select(x => x.Position.TotalSeconds.ToString("0.0")))}");
+				// the seek is set while the media opens, so the player prerolls the resume position directly and never decodes the start of the media
+				var earlyFrames = _frames.Where(x => x.Position < early).ToList();
+				Assert.True(earlyFrames.Count == 0, $"{name}: the player produced {earlyFrames.Count} frames of the start of the media: {string.Join(", ", earlyFrames.Select(x => $"{(x.Shown ? "" : "(hidden)")}{x.Position.TotalSeconds:0.0}"))}");
 			}
 
 			Assert.True(Seeker.IsVideoVisible, $"{name}: the video was still hidden at the end");
@@ -264,6 +344,7 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 		public void Dispose()
 		{
 			_timeBarSubscription.Dispose();
+			_visibleSubscription.Dispose();
 			_player.Dispose();
 		}
 	}

@@ -18,10 +18,12 @@ internal sealed class WmpSeeker
 	private readonly Subject<TimeSpan> _shown = new();
 
 	private readonly Subject<bool> _videoVisible = new();
+	private readonly object _gate = new();
 	private volatile bool _opened;
 	private volatile bool _buffering;
 	private volatile bool _seekRequested;
 	private volatile bool _seekCompleted;
+	private TimeSpan? _seekTarget;
 	private DateTimeOffset _loadingSince;
 
 	/// <summary>How long the video is kept hidden at most: it is shown even if the player never gets where the app wants it.</summary>
@@ -36,17 +38,36 @@ internal sealed class WmpSeeker
 		// shows the frame it had (the start of the media). The seek is done, and the buffer filled, only when it says so.
 		_mp.PlaybackSession.SeekCompleted += (_, _) =>
 		{
-			_seekCompleted = true;
+			lock (_gate)
+			{
+				_seekCompleted = true;
+			}
+
 			EvaluateVideo();
 		};
-		_mp.PlaybackSession.BufferingStarted += (_, _) => _buffering = true;
+		_mp.PlaybackSession.BufferingStarted += (_, _) =>
+		{
+			lock (_gate)
+			{
+				_buffering = true;
+			}
+		};
 		_mp.PlaybackSession.BufferingEnded += (_, _) =>
 		{
-			_buffering = false;
+			lock (_gate)
+			{
+				_buffering = false;
+			}
+
+			EvaluateVideo();
+		};
+		_mp.PlaybackSession.PositionChanged += (_, _) =>
+		{
+			ApplyPendingSeek(ActualPosition);
 			EvaluateVideo();
 		};
 		PositionChanged = Observable.Merge(
-				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Do(ApplyPendingSeek).Do(_ => EvaluateVideo()).Where(_seek.ShouldReport),
+				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Where(_seek.ShouldReport),
 				_shown,
 				_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 			.Publish()
@@ -65,22 +86,35 @@ internal sealed class WmpSeeker
 	/// <summary>New media is being loaded: its video is hidden until it is where it has to be.</summary>
 	public void BeginLoading()
 	{
-		_opened = false;
-		_buffering = false;
-		_seekRequested = false;
-		_seekCompleted = false;
-		_loadingSince = DateTimeOffset.UtcNow;
+		lock (_gate)
+		{
+			_opened = false;
+			_buffering = false;
+			_seekTarget = _seek.Target;
+			_seekRequested = _seekTarget is not null;
+			_seekCompleted = false;
+			_loadingSince = DateTimeOffset.UtcNow;
+		}
+
 		SetVideoVisible(false);
 	}
 
 	private void SetVideoVisible(bool visible)
 	{
-		if (IsVideoVisible == visible)
+		lock (_gate)
 		{
-			return;
+			if (IsVideoVisible == visible)
+			{
+				return;
+			}
+
+			IsVideoVisible = visible;
+			if (visible)
+			{
+				_seekTarget = null;
+			}
 		}
 
-		IsVideoVisible = visible;
 		_videoVisible.OnNext(visible);
 	}
 
@@ -91,13 +125,34 @@ internal sealed class WmpSeeker
 			return;
 		}
 
-		var arrived = _seek.ShouldReport(ActualPosition);
-		var playing = _mp.SafeGetValue(mp => mp.PlaybackSession.PlaybackState is MediaPlaybackState.Playing or MediaPlaybackState.Paused, false);
-		var seeked = !_seekRequested || _seekCompleted;
-		if ((_opened && arrived && playing && !_buffering && seeked) || DateTimeOffset.UtcNow - _loadingSince > LoadingTimeout)
+		if (DateTimeOffset.UtcNow - _loadingSince > LoadingTimeout)
 		{
 			SetVideoVisible(true);
+			return;
 		}
+
+		var actual = ActualPosition;
+		var state = _mp.SafeGetValue(mp => mp.PlaybackSession.PlaybackState, MediaPlaybackState.None);
+		lock (_gate)
+		{
+			if (IsVideoVisible)
+			{
+				return;
+			}
+
+			var arrived = _seekTarget is not { } target || (actual - target).Duration() <= PendingSeek.Tolerance;
+			var playing = PlayRequested
+				? state == MediaPlaybackState.Playing
+				: state is MediaPlaybackState.Playing or MediaPlaybackState.Paused;
+			var seeked = !_seekRequested || _seekCompleted;
+			if (!_opened || !arrived || !playing || _buffering || !seeked)
+			{
+				return;
+			}
+		}
+
+		_seek.ShouldReport(actual);
+		SetVideoVisible(true);
 	}
 
 	/// <summary>Shared, so that the seek is made once per event whoever listens.</summary>
@@ -121,6 +176,12 @@ internal sealed class WmpSeeker
 	{
 		if (position is not { } held)
 		{
+			lock (_gate)
+			{
+				_seekTarget = null;
+				_seekRequested = false;
+			}
+
 			_seek.Clear();
 			return;
 		}
@@ -128,24 +189,49 @@ internal sealed class WmpSeeker
 		_seek.Set(held);
 		_shown.OnNext(held);
 		BeginLoading();
-		_seekRequested = true;
 	}
 
 	public void SeekTo(TimeSpan time)
 	{
 		if (CanSeekNow)
 		{
+			if (!IsVideoVisible)
+			{
+				lock (_gate)
+				{
+					_seekTarget = time;
+					_seekRequested = true;
+				}
+
+				_seek.Set(time);
+				_shown.OnNext(time);
+				SetPosition(time);
+				return;
+			}
+
+			lock (_gate)
+			{
+				_seekTarget = null;
+				_seekRequested = false;
+			}
+
 			_seek.Clear();
 			SetPosition(time);
 			return;
 		}
 
+		lock (_gate)
+		{
+			_seekTarget = time;
+			_seekRequested = true;
+		}
+
 		_seek.Set(time);
-		_seekRequested = true;
 		_shown.OnNext(time);
 
-		// The player started playing the stream from its start, and shows it, while it cannot seek yet. It waits, paused, until the
-		// media is open and has been moved to the position, and then plays.
+		// Setting the position while the media opens makes the player preroll the target frame instead of the start of the stream
+		// (0:00:00). It waits, paused, until the media is open and at the position, and then plays.
+		SetPosition(time);
 		try
 		{
 			_mp.Pause();
@@ -160,16 +246,20 @@ internal sealed class WmpSeeker
 		}
 	}
 
-	/// <summary>The media is open, the player can seek now.</summary>
+	/// <summary>The media is open, the player can seek now if it has not already seeked while opening.</summary>
 	public void NotifyOpened()
 	{
-		if (_seek.Target is { } target)
+		if (_seek.Target is { } target && (_seek.NeedsSeek(ActualPosition) || !_seekCompleted))
 		{
 			SetPosition(target);
 		}
 
 		PlayIfWaiting();
-		_opened = true;
+		lock (_gate)
+		{
+			_opened = true;
+		}
+
 		EvaluateVideo();
 	}
 
@@ -234,7 +324,11 @@ internal sealed class WmpSeeker
 
 	private void SetPosition(TimeSpan time)
 	{
-		_seekCompleted = false;
+		lock (_gate)
+		{
+			_seekCompleted = false;
+		}
+
 		try
 		{
 			_mp.PlaybackSession.Position = time;
