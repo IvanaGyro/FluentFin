@@ -10,6 +10,8 @@ jobs:
   tests:
     name: 'Unit and style tests'
     runs-on: windows-latest
+    # a test that hangs (a player that never answers) must end the run, not hold the runner for six hours
+    timeout-minutes: 90
     steps:
     -   name: 'Checkout'
         uses: actions/checkout@v4
@@ -42,11 +44,11 @@ jobs:
             Start-Service Audiosrv
 
     -   name: 'Test the app'
-        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --blame-hang-timeout 5m --blame-hang-dump-type none
 
     # what Windows Media Player plays is measured with the peak meter of the device: show the numbers also when it passes
     -   name: 'Show what Windows Media Player plays'
-        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --no-build --filter "FullyQualifiedName~WmpAudioPlaybackTests|FullyQualifiedName~WmpSeekTests|FullyQualifiedName~WmpSwitchTests" --logger "console;verbosity=detailed"
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --no-build --blame-hang-timeout 5m --blame-hang-dump-type none --filter "FullyQualifiedName~WmpAudioPlaybackTests|FullyQualifiedName~WmpSeekTests|FullyQualifiedName~WmpSwitchTests" --logger "console;verbosity=detailed"
 
   # Flyleaf on arm64 runs native arm64 code (FFmpeg, XAudio2, the .NET runtime) that x64 does not: play audio there too.
   flyleaf-arm64:
