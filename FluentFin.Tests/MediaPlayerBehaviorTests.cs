@@ -1,5 +1,6 @@
 using FluentFin.Core.Contracts.Services;
 using FluentFin.MediaPlayers;
+using ReactiveUI;
 using Xunit.Abstractions;
 
 namespace FluentFin.Tests;
@@ -261,6 +262,24 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		{
 			await Within(playerType, "Dispose", controller.Dispose);
 		}
+	}
+
+	/// <summary>
+	/// The first <see cref="FlyleafMediaPlayerController"/> of the run did not return from its constructor in 30 s, with no other Flyleaf
+	/// player alive, while a plain Flyleaf player is created by the audio tests. The steps of the constructor one by one, each with a limit,
+	/// name the one that does not return.
+	/// </summary>
+	[Fact]
+	public async Task Flyleaf_TheStepsOfTheController_Return()
+	{
+		await Within(MediaPlayerType.Flyleaf, "starting the engine", FlyleafAudioPlaybackTests.StartEngine);
+		using var player = await Within(MediaPlayerType.Flyleaf, "new Player()", () => new FlyleafLib.MediaPlayer.Player());
+		await Within(MediaPlayerType.Flyleaf, "KeyBindings.RemoveAll", () => player.Config.Player.KeyBindings.RemoveAll());
+		await Within(MediaPlayerType.Flyleaf, "reading Status", () => player.Status);
+		using var status = await Within(MediaPlayerType.Flyleaf, "WhenAnyValue(Status)", () => player.WhenAnyValue(x => x.Status).Subscribe(_ => { }));
+		using var time = await Within(MediaPlayerType.Flyleaf, "WhenAnyValue(CurTime)", () => player.WhenAnyValue(x => x.CurTime).Subscribe(_ => { }));
+		var controller = await Within(MediaPlayerType.Flyleaf, "new FlyleafMediaPlayerController()", () => new FlyleafMediaPlayerController());
+		await Within(MediaPlayerType.Flyleaf, "Dispose of the controller", controller.Dispose);
 	}
 
 	private Task Within(MediaPlayerType playerType, string call, Action action) =>
