@@ -282,6 +282,31 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		await Within(MediaPlayerType.Flyleaf, "Dispose of the controller", controller.Dispose);
 	}
 
+	/// <summary>
+	/// The steps of the constructor of <see cref="FlyleafMediaPlayerController"/>, each announced on the console before it runs: the console
+	/// reaches the log of the run at once, also when the test host hangs, and the last line names the step that does not return.
+	/// </summary>
+	private static void TraceFlyleafSteps()
+	{
+		static void Step(string name) => Console.WriteLine($"MediaPlayerBehaviorTests: Flyleaf step: {name} (thread {Environment.CurrentManagedThreadId}, {DateTime.UtcNow:HH:mm:ss.fff})");
+
+		Step("new Player()");
+		using var player = new FlyleafLib.MediaPlayer.Player();
+		Step("KeyBindings.RemoveAll");
+		player.Config.Player.KeyBindings.RemoveAll();
+		Step("reading Status");
+		_ = player.Status;
+		Step("WhenAnyValue(Status)");
+		using (player.WhenAnyValue(x => x.Status).Subscribe(_ => { }))
+		{
+			Step("WhenAnyValue(CurTime)");
+			using (player.WhenAnyValue(x => x.CurTime).Subscribe(_ => { }))
+			{
+				Step("disposing the player");
+			}
+		}
+	}
+
 	private Task Within(MediaPlayerType playerType, string call, Action action) =>
 		Within(playerType, call, () => { action(); return true; });
 
@@ -353,6 +378,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		{
 			FlyleafAudioPlaybackTests.StartEngine();
 			Console.WriteLine($"MediaPlayerBehaviorTests: creating a Flyleaf player. {FlyleafPlayers()}");
+			TraceFlyleafSteps();
 		}
 
 		return type switch
