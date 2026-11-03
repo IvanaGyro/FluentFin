@@ -1,4 +1,4 @@
-﻿using System.Reactive;
+using System.Reactive;
 using System.Reactive.Linq;
 using DynamicData;
 using FluentFin.Core.Contracts.Services;
@@ -105,7 +105,7 @@ namespace FluentFin.MediaPlayers
 		}
 
 
-		public IObservable<TimeSpan> DurationChanged => _mp.SafeGetValue(mp => mp.PlaybackSession, null)?.Events().NaturalDurationChanged.Select(_ => _mp.SafeGetValue(mp => mp.NaturalDuration, TimeSpan.Zero)) ?? Observable.Empty<TimeSpan>();
+		public IObservable<TimeSpan> DurationChanged => _mp.SafeGetValue(mp => mp.PlaybackSession, null)?.Events().NaturalDurationChanged.Select(_ => _mp.SafeGetValue(mp => mp.NaturalDuration, TimeSpan.Zero)).Where(d => d > TimeSpan.Zero) ?? Observable.Empty<TimeSpan>();
 		public IObservable<TimeSpan> PositionChanged => _seeker.PositionChanged;
 		public IObservable<Unit> Playing => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Playing).Select(_ => Unit.Default);
 		public IObservable<Unit> Paused => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Paused).Select(_ => Unit.Default);

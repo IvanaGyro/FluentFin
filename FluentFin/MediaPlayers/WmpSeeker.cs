@@ -67,7 +67,7 @@ internal sealed class WmpSeeker
 			EvaluateVideo();
 		};
 		PositionChanged = Observable.Merge(
-				_mp.PlaybackSession.Events().PositionChanged.Select(_ => ActualPosition).Where(_seek.ShouldReport),
+				_mp.PlaybackSession.Events().PositionChanged.Where(_ => CanEndSeek).Select(_ => ActualPosition).Where(_seek.ShouldReport),
 				_shown,
 				_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 			.Publish()
@@ -153,6 +153,18 @@ internal sealed class WmpSeeker
 
 		_seek.ShouldReport(actual);
 		SetVideoVisible(true);
+		_shown.OnNext(actual);
+	}
+
+	private bool CanEndSeek
+	{
+		get
+		{
+			lock (_gate)
+			{
+				return _opened && (!_seekRequested || _seekCompleted);
+			}
+		}
 	}
 
 	/// <summary>Shared, so that the seek is made once per event whoever listens.</summary>
@@ -167,7 +179,7 @@ internal sealed class WmpSeeker
 		get
 		{
 			var actual = ActualPosition;
-			return _seek.ShouldReport(actual) ? actual : _seek.Target ?? actual;
+			return CanEndSeek && _seek.ShouldReport(actual) ? actual : _seek.Target ?? actual;
 		}
 	}
 
@@ -222,6 +234,7 @@ internal sealed class WmpSeeker
 
 		lock (_gate)
 		{
+			_opened = false;
 			_seekTarget = time;
 			_seekRequested = true;
 		}

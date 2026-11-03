@@ -1,4 +1,4 @@
-﻿using System.Reactive;
+using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Reflection;
@@ -75,7 +75,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		set => _mp.Audio.Volume = (int)value;
 	}
 
-	public IObservable<TimeSpan> DurationChanged => _mp.WhenAnyValue(x => x.Duration).Select(x => new TimeSpan(x));
+	public IObservable<TimeSpan> DurationChanged => _mp.WhenAnyValue(x => x.Duration).Select(x => new TimeSpan(x)).Where(d => d > TimeSpan.Zero);
 	public IObservable<TimeSpan> PositionChanged => _positionChanged;
 	public IObservable<Unit> Playing => _mp.WhenAnyValue(x => x.Status).Where(x => x is Status.Playing).Select(_ => Unit.Default);
 	public IObservable<Unit> Paused => _mp.WhenAnyValue(x => x.Status).Where(x => x is Status.Paused).Select(_ => Unit.Default);

@@ -1,4 +1,4 @@
-﻿using System.Reactive.Disposables;
+using System.Reactive.Disposables;
 using System.Globalization;
 using System.Reactive.Disposables.Fluent;
 using System.Reactive.Linq;
@@ -87,7 +87,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Releases the player's media source and reports the current playback session as stopped, which makes the server
 	/// end its transcoding job. Safe to call repeatedly, only the first call for a session has an effect.
 	/// </summary>
-	private async Task StopPlayback(bool stopPlayer = true)
+	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null)
 	{
 		var session = Interlocked.Exchange(ref _session, null);
 		long? position = null;
@@ -99,6 +99,8 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 			if (stopPlayer)
 			{
+				// the stopped player reports zero while the server answers: hold the position before stopping the player
+				MediaPlayer?.HoldPosition(holdPosition);
 				MediaPlayer?.Stop();
 			}
 		}
@@ -386,18 +388,16 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		var version = Interlocked.Increment(ref _loadVersion);
+		var startTicks = resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
 
 		// clean up the previous session first, whether or not the new media can be loaded
-		await StopPlayback();
+		await StopPlayback(holdPosition: startTicks is > 0 ? TimeSpan.FromTicks(startTicks.Value) : null);
 
 		// the teardown takes a round trip to the server: another load may have started and finished meanwhile, the player is its
 		if (version != _loadVersion)
 		{
 			return false;
 		}
-
-		// the stopped player reports zero while the server answers: the time bar stays where the item was
-		MediaPlayer.HoldPosition(resumeTicks is { } held ? TimeSpan.FromTicks(held) : null);
 
 		var full = await JellyfinClient.GetItem(selectedItem.Dto.Id.Value);
 
@@ -863,4 +863,3 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 	}
 }
-

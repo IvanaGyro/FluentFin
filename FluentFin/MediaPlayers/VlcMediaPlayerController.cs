@@ -1,4 +1,4 @@
-﻿using System.Reactive;
+using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using FluentFin.Core.Services;
@@ -188,7 +188,7 @@ namespace FluentFin.MediaPlayers
 			set => _mp.Volume = (int)value;
 		}
 
-		public IObservable<TimeSpan> DurationChanged => _mp.Events().LengthChanged.Select(e => TimeSpan.FromMilliseconds(e.Length));
+		public IObservable<TimeSpan> DurationChanged => _mp.Events().LengthChanged.Select(e => TimeSpan.FromMilliseconds(e.Length)).Where(d => d > TimeSpan.Zero);
 		public IObservable<TimeSpan> PositionChanged => _positionChanged;
 		public IObservable<Unit> Playing => _mp.Events().Playing.Select(_ => Unit.Default);
 		public IObservable<Unit> Paused => _mp.Events().Paused.Select(_ => Unit.Default);

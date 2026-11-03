@@ -279,6 +279,9 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 				Seeker.SeekTo(resume);
 			}
 
+			// ReportStartAsync reads the position right after SeekTo, while the media is still opening
+			_ = Seeker.Position;
+
 			// loaded: where the item is going to play
 			await WaitFor(() => Seeker.IsVideoVisible, TimeSpan.FromSeconds(60));
 		}

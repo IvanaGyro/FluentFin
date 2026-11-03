@@ -69,7 +69,7 @@ public sealed partial class TransportControls : UserControl
 		}
 
 		TimeSpan duration = TimeSpan.Zero;
-		controller.DurationChanged.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
+		controller.DurationChanged.Where(d => d > TimeSpan.Zero).ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
 		{
 			duration = e;
 
