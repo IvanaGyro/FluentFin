@@ -235,8 +235,9 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 	}
 
 	/// <summary>
-	/// A seek while the open stream buffers (after a seek to a segment the server is slow to send): the player cannot seek in that state,
-	/// the seek is made when it can, and the time bar follows the player again once it plays. The media does not open a second time.
+	/// A seek while the open stream buffers (it played to the end of a segment and the server is slow to send the next one): the player
+	/// cannot seek in that state, the seek is made all the same, and the time bar follows the player again once it plays. The media does
+	/// not open a second time.
 	/// </summary>
 	[Fact]
 	public async Task ASeekWhileTheOpenStreamBuffers_LetsTheTimeBarFollowThePlayerAgain()
@@ -258,11 +259,10 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		player.Play();
 		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(15));
 
-		// into the segment that takes its time, then again while the player waits for it
-		seeker.SeekTo(TimeSpan.FromSeconds(5));
-		await WaitFor(() => player.PlaybackSession.PlaybackState is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), TimeSpan.FromSeconds(5));
+		// the first segment plays to its end (4 s) and the player waits for the second one, which the server sends 6 s after it was asked
+		await WaitFor(() => player.PlaybackSession.PlaybackState is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), TimeSpan.FromSeconds(10));
 		var stateAtTheSecondSeek = player.PlaybackSession.PlaybackState;
-		var second = TimeSpan.FromSeconds(6);
+		var second = TimeSpan.FromSeconds(5);
 		seeker.SeekTo(second);
 
 		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= second + TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
@@ -274,9 +274,9 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		string history;
 		lock (states) { history = string.Join(", ", states); }
 
-		output.WriteLine($"state at the second seek={stateAtTheSecondSeek}, now={player.PlaybackSession.PlaybackState}, actual={actual:g}, seeker={reported:g}, last given to the time bar={last:g}");
+		output.WriteLine($"state at the seek={stateAtTheSecondSeek}, now={player.PlaybackSession.PlaybackState}, actual={actual:g}, seeker={reported:g}, last given to the time bar={last:g}");
 		output.WriteLine("states: " + history);
-		Assert.True(stateAtTheSecondSeek is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), $"the player could seek at the second seek ({stateAtTheSecondSeek}), the test did not reach the case");
+		Assert.True(stateAtTheSecondSeek is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), $"the player could seek at the seek ({stateAtTheSecondSeek}), the test did not reach the case");
 		Assert.True(actual >= second + TimeSpan.FromSeconds(1.5), $"the player is at {actual}, it did not play on after the seek to {second}");
 		Assert.True((reported - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar shows {reported}, the player is at {actual}");
 		Assert.True((last - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar was last given {last}, the player is at {actual}");

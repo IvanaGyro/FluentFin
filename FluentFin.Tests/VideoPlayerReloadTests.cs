@@ -172,6 +172,8 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		using var server = new FakeMediaServer(Path.Combine(AppContext.BaseDirectory, "Media", "switch"), ServerDelay);
 		using var player = CreatePlayer(playerType);
 		var target = TimeSpan.FromSeconds(2);
+		// the time bar listens to the positions, which is how a player learns that it is at the target of a seek
+		using var timeBar = player.PositionChanged.Subscribe(_ => { });
 
 		Assert.True(player.Play(server.Url("tracks.mkv")));
 		await WaitFor(() => player.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
