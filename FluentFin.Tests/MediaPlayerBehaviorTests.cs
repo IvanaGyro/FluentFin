@@ -265,12 +265,11 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 	}
 
 	/// <summary>
-	/// The first <see cref="FlyleafMediaPlayerController"/> of the run did not return from its constructor in 30 s, with no other Flyleaf
-	/// player alive, while a plain Flyleaf player is created by the audio tests. The steps of the constructor one by one, each with a limit,
-	/// name the one that does not return.
+	/// Flyleaf invokes the thread that started its engine when a player is created on another thread: the first controller created by an
+	/// asynchronous test did not return. A player created on another thread than the one of the engine comes back.
 	/// </summary>
 	[Fact]
-	public async Task Flyleaf_TheStepsOfTheController_Return()
+	public async Task Flyleaf_APlayerCreatedOnAnotherThreadThanTheEngine_IsCreated()
 	{
 		await Within(MediaPlayerType.Flyleaf, "starting the engine", FlyleafAudioPlaybackTests.StartEngine);
 		using var player = await Within(MediaPlayerType.Flyleaf, "new Player()", () => new FlyleafLib.MediaPlayer.Player());
@@ -280,31 +279,6 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var time = await Within(MediaPlayerType.Flyleaf, "WhenAnyValue(CurTime)", () => player.WhenAnyValue(x => x.CurTime).Subscribe(_ => { }));
 		var controller = await Within(MediaPlayerType.Flyleaf, "new FlyleafMediaPlayerController()", () => new FlyleafMediaPlayerController());
 		await Within(MediaPlayerType.Flyleaf, "Dispose of the controller", controller.Dispose);
-	}
-
-	/// <summary>
-	/// The steps of the constructor of <see cref="FlyleafMediaPlayerController"/>, each announced on the console before it runs: the console
-	/// reaches the log of the run at once, also when the test host hangs, and the last line names the step that does not return.
-	/// </summary>
-	private static void TraceFlyleafSteps()
-	{
-		static void Step(string name) => Console.WriteLine($"MediaPlayerBehaviorTests: Flyleaf step: {name} (thread {Environment.CurrentManagedThreadId}, {DateTime.UtcNow:HH:mm:ss.fff})");
-
-		Step("new Player()");
-		using var player = new FlyleafLib.MediaPlayer.Player();
-		Step("KeyBindings.RemoveAll");
-		player.Config.Player.KeyBindings.RemoveAll();
-		Step("reading Status");
-		_ = player.Status;
-		Step("WhenAnyValue(Status)");
-		using (player.WhenAnyValue(x => x.Status).Subscribe(_ => { }))
-		{
-			Step("WhenAnyValue(CurTime)");
-			using (player.WhenAnyValue(x => x.CurTime).Subscribe(_ => { }))
-			{
-				Step("disposing the player");
-			}
-		}
 	}
 
 	private Task Within(MediaPlayerType playerType, string call, Action action) =>
@@ -377,8 +351,6 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		if (type == MediaPlayerType.Flyleaf)
 		{
 			FlyleafAudioPlaybackTests.StartEngine();
-			Console.WriteLine($"MediaPlayerBehaviorTests: creating a Flyleaf player. {FlyleafPlayers()}");
-			TraceFlyleafSteps();
 		}
 
 		return type switch
