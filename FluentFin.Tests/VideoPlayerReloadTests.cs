@@ -153,9 +153,15 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		await WaitFor(() => player.State == MediaPlayerState.Playing && player.Position >= before, TimeSpan.FromSeconds(20));
 
 		output.WriteLine($"{playerType}: after the second pick: requests={requests}, isPlaying={player.IsPlaying}, state={player.State}, position={player.Position:g}, selection={item.Selection}");
+		var state = player.State;
+		var position = player.Position;
+
+		// leaving the page, as the app does, ends what the view model listens to before the player is disposed
+		await vm.OnNavigatedFrom();
+
 		Assert.Equal(3, Volatile.Read(ref requests));
-		Assert.Equal(MediaPlayerState.Playing, player.State);
-		Assert.True(player.Position >= before - TimeSpan.FromSeconds(2), $"{playerType} plays at {player.Position}, the item was at {before}");
+		Assert.Equal(MediaPlayerState.Playing, state);
+		Assert.True(position >= before - TimeSpan.FromSeconds(2), $"{playerType} plays at {position}, the item was at {before}");
 	}
 
 	/// <summary>A seek back to where the player already was once: the player goes there again.</summary>

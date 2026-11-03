@@ -65,6 +65,11 @@ namespace FluentFin.MediaPlayers
 		{
 			get
 			{
+				if (_disposed)
+				{
+					return TimeSpan.Zero;
+				}
+
 				try
 				{
 					var time = _mp.Time;
@@ -400,7 +405,10 @@ namespace FluentFin.MediaPlayers
 
 		public void Dispose()
 		{
+			// the held position is reminded on a timer, which reads the state and the time of the player: it stops before VLC is released,
+			// a read of a released VLC player is an access violation that ends the process
 			_disposed = true;
+			_seek.Clear();
 			_libVLC.Log -= OnLibVlcLog;
 			_mp.Dispose();
 		}
@@ -409,7 +417,7 @@ namespace FluentFin.MediaPlayers
 
 		public IEnumerable<Core.Contracts.Services.AudioTrack> GetAudioTracks() => _mp.Media?.Tracks.Where(x => x.TrackType == TrackType.Audio).Select(x => new Core.Contracts.Services.AudioTrack(x.Id, x.Language, x.Description)) ?? [];
 
-		public MediaPlayerState State => ConvertState(_mp.State);
+		public MediaPlayerState State => _disposed ? MediaPlayerState.Stopped : ConvertState(_mp.State);
 
 		public TimeSpan Position
 		{
