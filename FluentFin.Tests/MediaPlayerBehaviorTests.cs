@@ -217,42 +217,73 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 	[MemberData(nameof(AllPlayers))]
 	public async Task SwitchingStream_WhileAlreadyPaused_StaysPausedWithoutEmittingPlaying(MediaPlayerType playerType)
 	{
+		// This test hung the test run (no result for hours) and the run does not say for which player or at which call: every call of the
+		// player runs with a limit, a call that does not return fails the test with its name
 		using var server = CreateServer();
-		using var controller = CreateController(playerType);
+		var controller = await Within(playerType, "creating the player", () => CreateController(playerType));
+		try
+		{
+			Assert.True(await Within(playerType, "Play(tracks.mkv)", () => controller.Play(server.Url("tracks.mkv"))));
+			await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
 
-		Assert.True(controller.Play(server.Url("tracks.mkv")));
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
+			await Within(playerType, "TogglePlayPlause (pause)", () => controller.TogglePlayPlause(null!).AsTask().Wait());
+			Assert.False(controller.IsPlaying);
 
-		await controller.TogglePlayPlause(null!);
-		Assert.False(controller.IsPlaying);
+			var playingEvents = 0;
+			var pausedEvents = 0;
+			using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+			using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
 
-		var playingEvents = 0;
-		var pausedEvents = 0;
-		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
-		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+			await Within(playerType, "HoldPosition", () => controller.HoldPosition(Target));
+			await Task.Delay(ServerAnswer);
 
-		controller.HoldPosition(Target);
-		await Task.Delay(ServerAnswer);
+			Assert.True(await Within(playerType, "Play(hls-d0) while paused", () => controller.Play(server.Url("hls-d0/index.m3u8"))));
+			await Within(playerType, "SeekTo", () => controller.SeekTo(Target));
 
-		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
-		controller.SeekTo(Target);
+			Assert.False(controller.IsPlaying);
+			Assert.Equal(0, Volatile.Read(ref playingEvents));
+			Assert.Equal(0, Volatile.Read(ref pausedEvents));
 
-		Assert.False(controller.IsPlaying);
-		Assert.Equal(0, Volatile.Read(ref playingEvents));
-		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+			await Task.Delay(TimeSpan.FromSeconds(1.5));
+			var settled = await Within(playerType, "Position", () => controller.Position);
+			await Task.Delay(TimeSpan.FromSeconds(1.0));
+			var afterWait = await Within(playerType, "Position", () => controller.Position);
 
-		await Task.Delay(TimeSpan.FromSeconds(1.5));
-		var settled = controller.Position;
-		await Task.Delay(TimeSpan.FromSeconds(1.0));
-		var afterWait = controller.Position;
+			output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
 
-		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
+			Assert.False(controller.IsPlaying);
+			Assert.Equal(0, Volatile.Read(ref playingEvents));
+			Assert.Equal(0, Volatile.Read(ref pausedEvents));
+			Assert.True(afterWait >= Target - TimeSpan.FromSeconds(2), $"{playerType} position {afterWait} is before {Target}");
+			Assert.True((afterWait - settled).Duration() < TimeSpan.FromSeconds(0.5), $"{playerType} advanced from {settled} to {afterWait} while paused");
+		}
+		finally
+		{
+			await Within(playerType, "Dispose", controller.Dispose);
+		}
+	}
 
-		Assert.False(controller.IsPlaying);
-		Assert.Equal(0, Volatile.Read(ref playingEvents));
-		Assert.Equal(0, Volatile.Read(ref pausedEvents));
-		Assert.True(afterWait >= Target - TimeSpan.FromSeconds(2), $"{playerType} position {afterWait} is before {Target}");
-		Assert.True((afterWait - settled).Duration() < TimeSpan.FromSeconds(0.5), $"{playerType} advanced from {settled} to {afterWait} while paused");
+	private Task Within(MediaPlayerType playerType, string call, Action action) =>
+		Within(playerType, call, () => { action(); return true; });
+
+	/// <summary>Runs a call of the player and fails the test when it does not return in 30 seconds, instead of hanging the whole run.</summary>
+	private async Task<T> Within<T>(MediaPlayerType playerType, string call, Func<T> action)
+	{
+		var started = DateTime.UtcNow;
+		var task = Task.Run(action);
+		if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30))) != task)
+		{
+			throw new TimeoutException($"{playerType}: {call} did not return in 30 s");
+		}
+
+		var result = await task;
+		var took = DateTime.UtcNow - started;
+		if (took > TimeSpan.FromSeconds(1))
+		{
+			output.WriteLine($"{playerType}: {call} took {took.TotalSeconds:0.0} s");
+		}
+
+		return result;
 	}
 
 	[Theory]
