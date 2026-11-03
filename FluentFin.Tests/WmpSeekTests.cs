@@ -234,6 +234,63 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		Assert.True(player.PlaybackSession.Position >= Target - TimeSpan.FromSeconds(1), $"the player is at {player.PlaybackSession.Position}");
 	}
 
+	/// <summary>
+	/// A seek while the open stream buffers (after a seek to a segment the server is slow to send): the player cannot seek in that state,
+	/// the seek is made when it can, and the time bar follows the player again once it plays. The media does not open a second time.
+	/// </summary>
+	[Fact]
+	public async Task ASeekWhileTheOpenStreamBuffers_LetsTheTimeBarFollowThePlayerAgain()
+	{
+		using var server = new FakeMediaServer(Path.Combine(AppContext.BaseDirectory, "Media", "hls"), TimeSpan.Zero)
+		{
+			FileDelay = path => path.EndsWith("seg1.ts", StringComparison.OrdinalIgnoreCase) ? TimeSpan.FromSeconds(6) : TimeSpan.Zero,
+		};
+		using var player = new MediaPlayer { AutoPlay = false };
+		var seeker = new WmpSeeker(player);
+		var shown = new List<TimeSpan>();
+		using var subscription = seeker.PositionChanged.Subscribe(x => { lock (shown) { shown.Add(x); } });
+		var states = new List<string>();
+		player.PlaybackSession.PlaybackStateChanged += (s, _) => { lock (states) { states.Add($"{s.PlaybackState}@{s.Position.TotalSeconds:0.0}"); } };
+		player.MediaOpened += (_, _) => seeker.NotifyOpened();
+
+		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url("index.m3u8")));
+		seeker.PlayRequested = true;
+		player.Play();
+		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(15));
+
+		// into the segment that takes its time, then again while the player waits for it
+		seeker.SeekTo(TimeSpan.FromSeconds(5));
+		await WaitFor(() => player.PlaybackSession.PlaybackState is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), TimeSpan.FromSeconds(5));
+		var stateAtTheSecondSeek = player.PlaybackSession.PlaybackState;
+		var second = TimeSpan.FromSeconds(6);
+		seeker.SeekTo(second);
+
+		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= second + TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
+		await Task.Delay(TimeSpan.FromSeconds(0.5));
+		var actual = player.PlaybackSession.Position;
+		var reported = seeker.Position;
+		TimeSpan last;
+		lock (shown) { last = shown.LastOrDefault(); }
+		string history;
+		lock (states) { history = string.Join(", ", states); }
+
+		output.WriteLine($"state at the second seek={stateAtTheSecondSeek}, now={player.PlaybackSession.PlaybackState}, actual={actual:g}, seeker={reported:g}, last given to the time bar={last:g}");
+		output.WriteLine("states: " + history);
+		Assert.True(stateAtTheSecondSeek is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), $"the player could seek at the second seek ({stateAtTheSecondSeek}), the test did not reach the case");
+		Assert.True(actual >= second + TimeSpan.FromSeconds(1.5), $"the player is at {actual}, it did not play on after the seek to {second}");
+		Assert.True((reported - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar shows {reported}, the player is at {actual}");
+		Assert.True((last - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar was last given {last}, the player is at {actual}");
+	}
+
+	private static async Task WaitFor(Func<bool> condition, TimeSpan timeout)
+	{
+		var end = DateTime.UtcNow + timeout;
+		while (DateTime.UtcNow < end && !condition())
+		{
+			await Task.Delay(50);
+		}
+	}
+
 	/// <summary>What the controller did before: the position is set when asked, whatever the player can do. Reported, not asserted.</summary>
 	[Fact]
 	public async Task Baseline_ASeekRightAfterPlay_IsReported()

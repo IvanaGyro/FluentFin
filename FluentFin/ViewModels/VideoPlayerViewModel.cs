@@ -385,7 +385,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
 	/// <param name="startPaused">Whether to pause again once loaded, for the same reload.</param>
-	private async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
+	internal async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool startPaused = false)
 	{
 		if (MediaPlayer is null)
 		{
@@ -730,7 +730,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			$"Url: {media?.Uri}").MaskApiKey();
 	}
 
-	private void SubscribeEvents(IMediaPlayerController mp)
+	internal void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
 		// the backends raise these on their own native threads, stopping a player from there can deadlock. The session is read where
