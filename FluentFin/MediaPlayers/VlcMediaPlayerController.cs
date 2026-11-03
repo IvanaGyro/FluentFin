@@ -77,8 +77,18 @@ namespace FluentFin.MediaPlayers
 			}
 		}
 
+		/// <summary>
+		/// How far before the target VLC may be and still be taken as there. Opening an HLS stream at a start time, VLC first reports the
+		/// start of the segment it begins with (4 s for a start at 6 s with segments of 4 s), within <see cref="PendingSeek.Tolerance"/>,
+		/// and the time bar went back by up to a segment before it went on from the start time (MediaPlayerBehaviorTests). VLC plays on
+		/// from where it landed, so it reaches the target soon also when the seek landed a little before it.
+		/// </summary>
+		private static readonly TimeSpan BeforeTheTarget = TimeSpan.FromSeconds(0.5);
+
 		private bool ShouldReportPosition(TimeSpan actual) =>
-			(actual > TimeSpan.Zero || _seek.Target is not { Ticks: > 0 }) && _seek.ShouldReport(actual);
+			(actual > TimeSpan.Zero || _seek.Target is not { Ticks: > 0 })
+			&& (_seek.Target is not { } target || actual >= target - BeforeTheTarget)
+			&& _seek.ShouldReport(actual);
 
 		private void SetIsPlaying(bool playing)
 		{

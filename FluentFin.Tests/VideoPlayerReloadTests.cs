@@ -47,11 +47,14 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		],
 	};
 
+	// The players raise their events on their own threads (VLC on its event thread, which must not call VLC back): what waits for an event
+	// goes on on another thread, as the app goes on on the UI thread.
+
 	/// <summary>
 	/// The episode ends and the next one of the playlist is selected (what the handler of <c>Ended</c> and the handler of the selection
 	/// do): the next one plays by itself. The player has stopped playing at the end, and that must not be taken for a pause of the user.
 	/// </summary>
-	[Theory]
+	[Theory(Timeout = 120_000)]
 	[MemberData(nameof(AllPlayers))]
 	public async Task TheNextItem_Plays_AfterThePreviousOneEnded(MediaPlayerType playerType)
 	{
@@ -65,7 +68,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		Assert.True(await vm.LoadSelectedItem());
 		await WaitFor(() => player.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
 
-		var ended = new TaskCompletionSource();
+		var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		using var endedSubscription = player.Ended.Subscribe(_ => ended.TrySetResult());
 		player.SeekTo(TimeSpan.FromSeconds(10));
 		await Task.WhenAny(ended.Task, Task.Delay(TimeSpan.FromSeconds(20)));
@@ -86,7 +89,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 	/// The audio stream picked in the menu fails once the player tries to open it (the server answers 404 for the stream): picking it
 	/// again asks the server again and plays from where the item was.
 	/// </summary>
-	[Theory]
+	[Theory(Timeout = 120_000)]
 	[MemberData(nameof(AllPlayers))]
 	public async Task AStreamThatFailsToOpen_CanBePickedAgain_AndResumesWhereTheItemWas(MediaPlayerType playerType)
 	{
@@ -111,7 +114,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		await WaitFor(() => player.Position >= TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(20));
 		var before = player.Position;
 
-		var errored = new TaskCompletionSource();
+		var errored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		using var erroredSubscription = player.Errored.Subscribe(_ => errored.TrySetResult());
 		Pick(player, 4);
 		await WaitFor(() => Volatile.Read(ref requests) >= 2, TimeSpan.FromSeconds(10));
@@ -131,7 +134,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 	}
 
 	/// <summary>A seek back to where the player already was once: the player goes there again.</summary>
-	[Theory]
+	[Theory(Timeout = 120_000)]
 	[MemberData(nameof(AllPlayers))]
 	public async Task SeekingTwiceToTheSamePosition_GoesThereTwice(MediaPlayerType playerType)
 	{
@@ -156,7 +159,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 	}
 
 	/// <summary>A seek before the start (back five seconds, one second after the start) goes to the start, and the time bar goes on.</summary>
-	[Theory]
+	[Theory(Timeout = 120_000)]
 	[MemberData(nameof(AllPlayers))]
 	public async Task ASeekBeforeTheStart_GoesToTheStart_AndThePositionGoesOn(MediaPlayerType playerType)
 	{

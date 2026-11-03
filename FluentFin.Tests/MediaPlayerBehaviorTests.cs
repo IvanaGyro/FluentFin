@@ -54,6 +54,8 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 
 		// Simulate switching audio stream: pause backend in place and hold position while waiting for server
 		controller.HoldPosition(Target);
+		// a subscription is given the position the player is at, before the switch: what counts is what comes after the hold
+		lock (positions) { positions.Clear(); }
 		Assert.True(controller.IsPlaying);
 		Assert.Equal(Target, controller.Position);
 		await Task.Delay(ServerAnswer);
@@ -184,6 +186,8 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var posSub = controller.PositionChanged.Subscribe(p => { lock (positions) { positions.Add(p); } });
 
 		controller.HoldPosition(Target);
+		// a subscription is given the position the player is at, before the switch: what counts is what comes after the hold
+		lock (positions) { positions.Clear(); }
 
 		// User clicks Pause while waiting for server
 		await controller.TogglePlayPlause(null!);
