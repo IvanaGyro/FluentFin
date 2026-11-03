@@ -58,31 +58,56 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 	[MemberData(nameof(AllPlayers))]
 	public async Task TheNextItem_Plays_AfterThePreviousOneEnded(MediaPlayerType playerType)
 	{
+		// this test hung the run without a result: every call runs with a limit and is announced on the console, which reaches the log
+		// of the run also while the test host hangs
 		using var server = new FakeMediaServer(Path.Combine(AppContext.BaseDirectory, "Media", "switch"), ServerDelay);
-		using var player = CreatePlayer(playerType);
-		var first = Item("first");
-		var next = Item("next");
-		var vm = CreateViewModel(player, [first, next], _ => Transcode(server.Url("hls-d0/index.m3u8")));
+		var player = await Within(playerType, "creating the player", () => CreatePlayer(playerType));
+		try
+		{
+			var first = Item("first");
+			var next = Item("next");
+			var vm = CreateViewModel(player, [first, next], _ => Transcode(server.Url("hls-d0/index.m3u8")));
 
-		vm.Playlist.SelectedItem = first;
-		Assert.True(await vm.LoadSelectedItem());
-		await WaitFor(() => player.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
+			vm.Playlist.SelectedItem = first;
+			Assert.True(await Within(playerType, "loading the first item", () => vm.LoadSelectedItem().GetAwaiter().GetResult()));
+			await WaitFor(() => player.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
 
-		var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		using var endedSubscription = player.Ended.Subscribe(_ => ended.TrySetResult());
-		player.SeekTo(TimeSpan.FromSeconds(10));
-		await Task.WhenAny(ended.Task, Task.Delay(TimeSpan.FromSeconds(20)));
-		output.WriteLine($"{playerType}: ended={ended.Task.IsCompleted}, isPlaying={player.IsPlaying}, state={player.State}, position={player.Position:g}");
-		Assert.True(ended.Task.IsCompleted, $"{playerType} did not report the end");
+			var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			using var endedSubscription = player.Ended.Subscribe(_ => ended.TrySetResult());
+			await Within(playerType, "seeking near the end", () => player.SeekTo(TimeSpan.FromSeconds(10)));
+			await Task.WhenAny(ended.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+			output.WriteLine($"{playerType}: ended={ended.Task.IsCompleted}, isPlaying={player.IsPlaying}, state={player.State}, position={player.Position:g}");
+			Assert.True(ended.Task.IsCompleted, $"{playerType} did not report the end");
 
-		vm.Playlist.SelectedItem = next;
-		Assert.True(await vm.LoadSelectedItem());
-		await WaitFor(() => player.State == MediaPlayerState.Playing && player.Position >= TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
+			vm.Playlist.SelectedItem = next;
+			Assert.True(await Within(playerType, "loading the next item", () => vm.LoadSelectedItem().GetAwaiter().GetResult()));
+			await WaitFor(() => player.State == MediaPlayerState.Playing && player.Position >= TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
 
-		output.WriteLine($"{playerType}: next item: isPlaying={player.IsPlaying}, state={player.State}, position={player.Position:g}");
-		Assert.True(player.IsPlaying, $"{playerType} opened the next item paused");
-		Assert.Equal(MediaPlayerState.Playing, player.State);
-		Assert.True(player.Position >= TimeSpan.FromSeconds(1.5), $"{playerType} is at {player.Position} of the next item");
+			output.WriteLine($"{playerType}: next item: isPlaying={player.IsPlaying}, state={player.State}, position={player.Position:g}");
+			Assert.True(player.IsPlaying, $"{playerType} opened the next item paused");
+			Assert.Equal(MediaPlayerState.Playing, player.State);
+			Assert.True(player.Position >= TimeSpan.FromSeconds(1.5), $"{playerType} is at {player.Position} of the next item");
+		}
+		finally
+		{
+			await Within(playerType, "disposing the player", player.Dispose);
+		}
+	}
+
+	private Task Within(MediaPlayerType playerType, string call, Action action) =>
+		Within(playerType, call, () => { action(); return true; });
+
+	/// <summary>Runs a call and fails the test when it does not return in 30 seconds, instead of hanging the whole run.</summary>
+	private static async Task<T> Within<T>(MediaPlayerType playerType, string call, Func<T> action)
+	{
+		Console.WriteLine($"VideoPlayerReloadTests: {playerType}: {call} ({DateTime.UtcNow:HH:mm:ss.fff})");
+		var task = Task.Run(action);
+		if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30))) != task)
+		{
+			throw new TimeoutException($"{playerType}: {call} did not return in 30 s");
+		}
+
+		return await task;
 	}
 
 	/// <summary>
