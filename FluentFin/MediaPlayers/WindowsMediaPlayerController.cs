@@ -93,14 +93,7 @@ namespace FluentFin.MediaPlayers
 					}
 				});
 			};
-			_mp.PlaybackSession.PlaybackStateChanged += (s, _) =>
-			{
-				_logger.LogInformation("Playback state: {State}, position={Position:g}", s.PlaybackState, s.Position);
-				if ((!_seeker.PlayRequested || _holding) && s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
-				{
-					_seeker.RequestPause();
-				}
-			};
+			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}, position={Position:g}", s.PlaybackState, s.Position);
 			_mp.PlaybackSession.SeekCompleted += (s, _) => _logger.LogInformation("Seek completed: position={Position:g}", s.Position);
 			_mp.PlaybackSession.BufferingStarted += (s, _) => _logger.LogInformation("Buffering started: position={Position:g}", s.Position);
 			_mp.PlaybackSession.BufferingEnded += (s, _) => _logger.LogInformation("Buffering ended: position={Position:g}", s.Position);
@@ -183,7 +176,11 @@ namespace FluentFin.MediaPlayers
 		public IObservable<double> VolumeChanged => _mp.Events().VolumeChanged.Select(_ => _mp.Volume);
 		public IObservable<string> SubtitleText { get; } = Observable.Empty<string>();
 
-		public void Dispose() => _mp.Dispose();
+		public void Dispose()
+		{
+			Stop();
+			_mp.Dispose();
+		}
 
 		public SourceAudioMenu? SourceAudioMenu { get; set; }
 

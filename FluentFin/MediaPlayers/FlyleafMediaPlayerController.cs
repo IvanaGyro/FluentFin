@@ -28,7 +28,6 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 	private volatile bool _opened;
 	private volatile bool _holding;
 	private volatile bool _keepIntentOnOpen;
-	private volatile bool _disposed;
 	private TimeSpan? _lastSeekIssued;
 
 	public FlyleafMediaPlayerController(FlyleafHost? host = null, Button? audioTracksButton = null)
@@ -40,15 +39,12 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 			host.Player = _mp;
 		}
 
-		_mp.WhenAnyValue(x => x.CurTime).Subscribe(_ => SyncBackendState());
 		_mp.WhenAnyValue(x => x.Status).Subscribe(status =>
 		{
 			if (status is Status.Ended)
 			{
 				_isPlaying = false;
 			}
-
-			SyncBackendState();
 		});
 
 		// shared, so that the position held is dropped once whoever listens has seen the player at it
@@ -66,24 +62,18 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 			}
 		};
 
-		_mp.Audio.Streams
-		   .ToObservableChangeSet()
-		   .Throttle(TimeSpan.FromSeconds(1))
-		   .Subscribe(_ =>
-		   {
-			   if (_audiosFlyoutButton?.DispatcherQueue is { } queue)
+		if (_audiosFlyoutButton is not null)
+		{
+			_mp.Audio.Streams
+			   .ToObservableChangeSet()
+			   .Throttle(TimeSpan.FromSeconds(1))
+			   .ObserveOn(RxSchedulers.MainThreadScheduler)
+			   .Subscribe(_ =>
 			   {
-				   queue.TryEnqueue(() =>
-				   {
-					   _audiosFlyoutButton.Flyout = Converters.Converters.GetAudiosFlyout(this, _defaultAudioIndex);
-					   ApplyPendingAudioTrack();
-				   });
-			   }
-			   else
-			   {
+				   _audiosFlyoutButton.Flyout = Converters.Converters.GetAudiosFlyout(this, _defaultAudioIndex);
 				   ApplyPendingAudioTrack();
-			   }
-		   });
+			   });
+		}
 	}
 
 	private bool CanEndSeek => !_holding && _opened;
@@ -106,45 +96,6 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		else
 		{
 			_paused.OnNext(Unit.Default);
-		}
-	}
-
-	private void SyncBackendState()
-	{
-		if (_disposed)
-		{
-			return;
-		}
-
-		try
-		{
-			if (_holding)
-			{
-				if (_mp.IsPlaying)
-				{
-					_mp.Pause();
-				}
-
-				return;
-			}
-
-			var actual = new TimeSpan(_mp.CurTime);
-			if (!_isPlaying && _mp.IsPlaying && (_seek.Target is null || (actual > TimeSpan.Zero && !_seek.NeedsSeek(actual))))
-			{
-				_mp.Pause();
-			}
-		}
-		catch
-		{
-		}
-	}
-
-	private async Task PauseOnceSeekedAsync()
-	{
-		for (var i = 0; i < 60 && !_disposed && !_isPlaying && !_holding; i++)
-		{
-			await Task.Delay(50);
-			SyncBackendState();
 		}
 	}
 
@@ -188,7 +139,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 
 	public void Dispose()
 	{
-		_disposed = true;
+		Stop();
 		_mp.Dispose();
 	}
 
@@ -225,8 +176,11 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		}
 
 		SetIsPlaying(false);
-		SyncBackendState();
-		_ = PauseOnceSeekedAsync();
+		_mp.Config.Player.AutoPlay = false;
+		if (_hasMedia)
+		{
+			_mp.Pause();
+		}
 	}
 
 	public bool Play()
@@ -244,7 +198,14 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		}
 
 		SetIsPlaying(true);
+		_mp.Config.Player.AutoPlay = true;
 		_mp.Play();
+		if (_seek.Target is { } target && target > TimeSpan.Zero && _lastSeekIssued != target)
+		{
+			_lastSeekIssued = target;
+			_mp.SeekAccurate((int)target.TotalMilliseconds);
+		}
+
 		return true;
 	}
 
@@ -265,7 +226,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		}
 
 		LastError = null;
-		_mp.Config.Player.AutoPlay = _isPlaying || _seek.Target is { Ticks: > 0 };
+		_mp.Config.Player.AutoPlay = _isPlaying;
 		var args = _mp.Open(HttpUtility.UrlDecode(uri.ToString()));
 		if (!args.Success)
 		{
@@ -275,7 +236,12 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		}
 
 		_hasMedia = true;
-		if (_seek.Target is { } target && target > TimeSpan.Zero)
+		if (_audiosFlyoutButton is null)
+		{
+			ApplyPendingAudioTrack();
+		}
+
+		if (_seek.Target is { } target && target > TimeSpan.Zero && _isPlaying)
 		{
 			_lastSeekIssued = target;
 			_mp.SeekAccurate((int)target.TotalMilliseconds);
@@ -283,11 +249,6 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		else if (!_isPlaying && _mp.IsPlaying)
 		{
 			_mp.Pause();
-		}
-
-		if (!_isPlaying)
-		{
-			_ = PauseOnceSeekedAsync();
 		}
 
 		_opened = true;
@@ -316,7 +277,7 @@ public sealed partial class FlyleafMediaPlayerController : IMediaPlayerControlle
 		_holding = false;
 		_seek.Set(timeSpan);
 		_seekPosition.OnNext(timeSpan);
-		if (_hasMedia && _lastSeekIssued != timeSpan)
+		if (_hasMedia && _isPlaying && _lastSeekIssued != timeSpan)
 		{
 			_lastSeekIssued = timeSpan;
 			_mp.SeekAccurate((int)timeSpan.TotalMilliseconds);

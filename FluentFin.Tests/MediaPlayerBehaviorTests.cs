@@ -19,8 +19,8 @@ namespace FluentFin.Tests;
 [Collection(AudioDevice.Name)]
 public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 {
-	private static readonly TimeSpan ServerDelay = TimeSpan.FromMilliseconds(400);
-	private static readonly TimeSpan ServerAnswer = TimeSpan.FromMilliseconds(500);
+	private static readonly TimeSpan ServerDelay = TimeSpan.FromMilliseconds(50);
+	private static readonly TimeSpan ServerAnswer = TimeSpan.FromMilliseconds(400);
 	private static readonly TimeSpan Target = TimeSpan.FromSeconds(6);
 
 	public static TheoryData<MediaPlayerType> AllPlayers => new()
@@ -44,7 +44,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 
 		Assert.True(controller.Play(server.Url("tracks.mkv")));
 		Assert.True(controller.IsPlaying);
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.2), TimeSpan.FromSeconds(15));
 
 		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
 		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
@@ -64,7 +64,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		controller.SeekTo(Target);
 		Assert.True(controller.IsPlaying);
 
-		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(25));
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(20));
 
 		List<TimeSpan> recordedPositions;
 		List<TimeSpan> recordedDurations;
@@ -89,7 +89,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var controller = CreateController(playerType);
 
 		Assert.True(controller.Play(server.Url("tracks.mkv")));
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
 
 		var playingEvents = 0;
 		var pausedEvents = 0;
@@ -98,7 +98,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 
 		// Begin stream switch (waiting for server)
 		controller.HoldPosition(Target);
-		await Task.Delay(150);
+		await Task.Delay(100);
 
 		// User clicks Pause while waiting for the server
 		await controller.TogglePlayPlause(null!);
@@ -115,9 +115,9 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.Equal(0, Volatile.Read(ref playingEvents));
 
 		// Let the stream finish opening and seeking to Target, then verify playback does not advance
-		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		await Task.Delay(TimeSpan.FromSeconds(1.5));
 		var settled = controller.Position;
-		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		await Task.Delay(TimeSpan.FromSeconds(1.0));
 		var afterWait = controller.Position;
 
 		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
@@ -151,9 +151,9 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.False(controller.IsPlaying);
 		Assert.Equal(1, Volatile.Read(ref pausedEvents));
 
-		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		await Task.Delay(TimeSpan.FromSeconds(1.5));
 		var settled = controller.Position;
-		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		await Task.Delay(TimeSpan.FromSeconds(1.0));
 		var afterWait = controller.Position;
 
 		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
@@ -173,7 +173,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var controller = CreateController(playerType);
 
 		Assert.True(controller.Play(server.Url("tracks.mkv")));
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
 
 		var playingEvents = 0;
 		var pausedEvents = 0;
@@ -189,7 +189,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.False(controller.IsPlaying);
 		Assert.Equal(1, Volatile.Read(ref pausedEvents));
 
-		await Task.Delay(200);
+		await Task.Delay(150);
 
 		// Server opens the new stream, and user clicks Play again while it is opening
 		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
@@ -200,7 +200,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.True(controller.IsPlaying);
 		Assert.Equal(1, Volatile.Read(ref playingEvents));
 
-		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(25));
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(20));
 
 		List<TimeSpan> recordedPositions;
 		lock (positions) { recordedPositions = [.. positions]; }
@@ -221,7 +221,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var controller = CreateController(playerType);
 
 		Assert.True(controller.Play(server.Url("tracks.mkv")));
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
 
 		await controller.TogglePlayPlause(null!);
 		Assert.False(controller.IsPlaying);
@@ -241,9 +241,9 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.Equal(0, Volatile.Read(ref playingEvents));
 		Assert.Equal(0, Volatile.Read(ref pausedEvents));
 
-		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		await Task.Delay(TimeSpan.FromSeconds(1.5));
 		var settled = controller.Position;
-		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		await Task.Delay(TimeSpan.FromSeconds(1.0));
 		var afterWait = controller.Position;
 
 		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
@@ -263,7 +263,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		using var controller = CreateController(playerType);
 
 		Assert.True(controller.Play(server.Url("tracks.mkv")));
-		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(15));
 
 		var playingEvents = 0;
 		var pausedEvents = 0;
@@ -273,7 +273,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		controller.SeekTo(Target);
 		Assert.True(controller.IsPlaying);
 
-		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(20));
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(15));
 
 		Assert.True(controller.IsPlaying);
 		Assert.Equal(0, Volatile.Read(ref pausedEvents));
