@@ -295,10 +295,8 @@ public sealed class WmpSwitchTests(ITestOutputHelper output)
 				return;
 			}
 
-			// what the view model does: hold the position, stop the player, ask the server (takes its time), open the stream, resume
+			// what the view model does: hold the position (pausing in place), ask the server (takes its time), open the stream, resume
 			Seeker.Hold(at);
-			_player.Pause();
-			_player.Source = null;
 			await Task.Delay(ServerAnswer);
 			await Open(to, at);
 		}

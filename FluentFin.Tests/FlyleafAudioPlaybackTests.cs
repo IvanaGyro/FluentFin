@@ -239,7 +239,7 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 	}
 
 	/// <summary>Starts Flyleaf's engine (once per process) with the app's configuration and the app's FFmpeg folder.</summary>
-	private static void StartEngine()
+	internal static void StartEngine()
 	{
 		lock (EngineLock)
 		{

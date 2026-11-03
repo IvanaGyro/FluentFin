@@ -87,7 +87,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Releases the player's media source and reports the current playback session as stopped, which makes the server
 	/// end its transcoding job. Safe to call repeatedly, only the first call for a session has an effect.
 	/// </summary>
-	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null)
+	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null, bool reloading = false)
 	{
 		var session = Interlocked.Exchange(ref _session, null);
 		long? position = null;
@@ -99,9 +99,16 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 			if (stopPlayer)
 			{
-				// the stopped player reports zero while the server answers: hold the position before stopping the player
-				MediaPlayer?.HoldPosition(holdPosition);
-				MediaPlayer?.Stop();
+				if (reloading)
+				{
+					// pause in place and keep the current frame and position while the server prepares the new stream
+					MediaPlayer?.HoldPosition(holdPosition ?? TimeSpan.Zero);
+				}
+				else
+				{
+					MediaPlayer?.HoldPosition(null);
+					MediaPlayer?.Stop();
+				}
 			}
 		}
 		catch (Exception ex)
@@ -278,9 +285,12 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		// A second pick while the first is still loading finds the player stopped and has no position, it continues the first switch
 		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
+		var paused = _loadFailed && _audioSwitch is { } failed && ReferenceEquals(failed.Item, item)
+			? failed.Paused
+			: !MediaPlayer.IsPlaying;
 		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
-			? pending
-			: new AudioSwitchState(item, GetKnownPosition(), MediaPlayer.State == MediaPlayerState.Paused, item.Selection);
+			? pending with { Paused = paused }
+			: new AudioSwitchState(item, GetKnownPosition(), paused, item.Selection);
 		_audioSwitch = state;
 		var request = ++_audioSwitchRequest;
 		_loadFailed = false;
@@ -389,9 +399,22 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		var version = Interlocked.Increment(ref _loadVersion);
 		var startTicks = resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
+		TimeSpan? hold = startTicks is > 0 ? TimeSpan.FromTicks(startTicks.Value) : null;
+
+		if (resumeTicks is not null)
+		{
+			if (startPaused)
+			{
+				MediaPlayer.Pause();
+			}
+			else if (!MediaPlayer.IsPlaying)
+			{
+				MediaPlayer.Play();
+			}
+		}
 
 		// clean up the previous session first, whether or not the new media can be loaded
-		await StopPlayback(holdPosition: startTicks is > 0 ? TimeSpan.FromTicks(startTicks.Value) : null);
+		await StopPlayback(holdPosition: hold, reloading: true);
 
 		// the teardown takes a round trip to the server: another load may have started and finished meanwhile, the player is its
 		if (version != _loadVersion)
@@ -403,6 +426,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		if (full is null || version != _loadVersion)
 		{
+			if (version == _loadVersion)
+			{
+				await StopPlayback();
+			}
+
 			return false;
 		}
 
@@ -410,6 +438,11 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		if (mediaResponse is null || version != _loadVersion)
 		{
+			if (version == _loadVersion)
+			{
+				await StopPlayback();
+			}
+
 			return false;
 		}
 
@@ -442,14 +475,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 		PlayMethod = mediaResponse.PlayMethod;
 
-		if ((resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks) is { } ticks)
+		if (startTicks is > 0)
 		{
-			MediaPlayer.SeekTo(TimeSpan.FromTicks(ticks));
-		}
-
-		if (startPaused)
-		{
-			MediaPlayer.Pause();
+			MediaPlayer.SeekTo(TimeSpan.FromTicks(startTicks.Value));
 		}
 
 		// loaded, the next audio switch starts from the position of this one
@@ -649,6 +677,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	{
 		{ State: MediaPlayerState.Playing or MediaPlayerState.Paused } mp => mp.Position.Ticks,
 		{ State: MediaPlayerState.Ended, Position.Ticks: > 0 } mp => mp.Position.Ticks,
+		{ Position.Ticks: > 0 } mp when _audioSwitch is not null => mp.Position.Ticks,
 		_ => null,
 	};
 

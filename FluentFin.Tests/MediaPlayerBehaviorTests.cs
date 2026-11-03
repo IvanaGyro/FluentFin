@@ -1,0 +1,310 @@
+using FluentFin.Core.Contracts.Services;
+using FluentFin.MediaPlayers;
+using Xunit.Abstractions;
+
+namespace FluentFin.Tests;
+
+/// <summary>
+/// Behavioral boundary tests across all three media player controllers (<see cref="WindowsMediaPlayerController"/>,
+/// <see cref="VlcMediaPlayerController"/>, and <see cref="FlyleafMediaPlayerController"/>) through the public
+/// <see cref="IMediaPlayerController"/> contract:
+/// <list type="bullet">
+/// <item><description>Switching streams while playing keeps <see cref="IMediaPlayerController.IsPlaying"/> true, emits no <see cref="IMediaPlayerController.Paused"/> events, and keeps the timeline at the resume position without flashing to 0:00:00.</description></item>
+/// <item><description>Pressing Pause while waiting for the server or while a stream is opening flips <see cref="IMediaPlayerController.IsPlaying"/> to false immediately and keeps the backend paused at the target position once loaded.</description></item>
+/// <item><description>Pressing Pause and then Play again during a switch or load flips the UI state and results in normal playback once ready.</description></item>
+/// <item><description>Switching streams while already paused stays paused at the target position without emitting <see cref="IMediaPlayerController.Playing"/>.</description></item>
+/// <item><description>Seeking while playing never flickers <see cref="IMediaPlayerController.IsPlaying"/> or emits <see cref="IMediaPlayerController.Paused"/>.</description></item>
+/// </list>
+/// </summary>
+[Collection(AudioDevice.Name)]
+public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
+{
+	private static readonly TimeSpan ServerDelay = TimeSpan.FromMilliseconds(400);
+	private static readonly TimeSpan ServerAnswer = TimeSpan.FromMilliseconds(500);
+	private static readonly TimeSpan Target = TimeSpan.FromSeconds(6);
+
+	public static TheoryData<MediaPlayerType> AllPlayers => new()
+	{
+		MediaPlayerType.WindowsMediaPlayer,
+		MediaPlayerType.Vlc,
+		MediaPlayerType.Flyleaf,
+	};
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task SwitchingStream_WhilePlaying_KeepsPlayStateAndTimelineWithoutFlickering(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		var positions = new List<TimeSpan>();
+		var durations = new List<TimeSpan>();
+
+		Assert.True(controller.Play(server.Url("tracks.mkv")));
+		Assert.True(controller.IsPlaying);
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
+
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+		using var posSub = controller.PositionChanged.Subscribe(p => { lock (positions) { positions.Add(p); } });
+		using var durSub = controller.DurationChanged.Subscribe(d => { lock (durations) { durations.Add(d); } });
+
+		// Simulate switching audio stream: pause backend in place and hold position while waiting for server
+		controller.HoldPosition(Target);
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(Target, controller.Position);
+		await Task.Delay(ServerAnswer);
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+
+		// Server responds with the transcoded stream; open and seek to Target
+		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
+		controller.SeekTo(Target);
+		Assert.True(controller.IsPlaying);
+
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(25));
+
+		List<TimeSpan> recordedPositions;
+		List<TimeSpan> recordedDurations;
+		lock (positions) { recordedPositions = [.. positions]; }
+		lock (durations) { recordedDurations = [.. durations]; }
+
+		output.WriteLine($"{playerType}: position={controller.Position:g}, playingEvents={playingEvents}, pausedEvents={pausedEvents}, positions=[{string.Join(", ", recordedPositions.Select(x => x.TotalSeconds.ToString("0.0")))}]");
+
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+		Assert.NotEmpty(recordedPositions);
+		Assert.All(recordedPositions, p => Assert.True(p >= Target - TimeSpan.FromSeconds(2), $"{playerType} reported early position {p}"));
+		Assert.All(recordedDurations, d => Assert.True(d > TimeSpan.Zero, $"{playerType} reported zero duration {d}"));
+	}
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task PausingDuringStreamSwitch_WhileWaitingForServer_KeepsPlayerPausedOnceLoaded(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		Assert.True(controller.Play(server.Url("tracks.mkv")));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+
+		// Begin stream switch (waiting for server)
+		controller.HoldPosition(Target);
+		await Task.Delay(150);
+
+		// User clicks Pause while waiting for the server
+		await controller.TogglePlayPlause(null!);
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+
+		await Task.Delay(ServerAnswer);
+
+		// Server responds and view model opens the new stream at Target
+		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
+		controller.SeekTo(Target);
+
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+
+		// Let the stream finish opening and seeking to Target, then verify playback does not advance
+		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		var settled = controller.Position;
+		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		var afterWait = controller.Position;
+
+		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
+
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+		Assert.True(afterWait >= Target - TimeSpan.FromSeconds(2), $"{playerType} position {afterWait} is before {Target}");
+		Assert.True((afterWait - settled).Duration() < TimeSpan.FromSeconds(0.5), $"{playerType} advanced from {settled} to {afterWait} while paused");
+	}
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task PausingWhileOpeningAndSeeking_StaysPausedOnceReady(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+
+		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
+		controller.SeekTo(Target);
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref playingEvents));
+
+		// User clicks Pause immediately while the stream is still opening/seeking
+		await controller.TogglePlayPlause(null!);
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+
+		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		var settled = controller.Position;
+		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		var afterWait = controller.Position;
+
+		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
+
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref playingEvents));
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+		Assert.True(afterWait >= Target - TimeSpan.FromSeconds(2), $"{playerType} position {afterWait} is before {Target}");
+		Assert.True((afterWait - settled).Duration() < TimeSpan.FromSeconds(0.5), $"{playerType} advanced from {settled} to {afterWait} while paused");
+	}
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task PausingThenPlayingAgain_DuringStreamSwitch_ResumesPlaybackNormally(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		Assert.True(controller.Play(server.Url("tracks.mkv")));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		var positions = new List<TimeSpan>();
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+		using var posSub = controller.PositionChanged.Subscribe(p => { lock (positions) { positions.Add(p); } });
+
+		controller.HoldPosition(Target);
+
+		// User clicks Pause while waiting for server
+		await controller.TogglePlayPlause(null!);
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+
+		await Task.Delay(200);
+
+		// Server opens the new stream, and user clicks Play again while it is opening
+		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
+		controller.SeekTo(Target);
+		Assert.False(controller.IsPlaying);
+
+		await controller.TogglePlayPlause(null!);
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref playingEvents));
+
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(25));
+
+		List<TimeSpan> recordedPositions;
+		lock (positions) { recordedPositions = [.. positions]; }
+
+		output.WriteLine($"{playerType}: position={controller.Position:g}, playingEvents={playingEvents}, pausedEvents={pausedEvents}");
+
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(1, Volatile.Read(ref pausedEvents));
+		Assert.Equal(1, Volatile.Read(ref playingEvents));
+		Assert.All(recordedPositions, p => Assert.True(p >= Target - TimeSpan.FromSeconds(2), $"{playerType} reported early position {p}"));
+	}
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task SwitchingStream_WhileAlreadyPaused_StaysPausedWithoutEmittingPlaying(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		Assert.True(controller.Play(server.Url("tracks.mkv")));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+
+		await controller.TogglePlayPlause(null!);
+		Assert.False(controller.IsPlaying);
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+
+		controller.HoldPosition(Target);
+		await Task.Delay(ServerAnswer);
+
+		Assert.True(controller.Play(server.Url("hls-d0/index.m3u8")));
+		controller.SeekTo(Target);
+
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+
+		await Task.Delay(TimeSpan.FromSeconds(2.5));
+		var settled = controller.Position;
+		await Task.Delay(TimeSpan.FromSeconds(1.2));
+		var afterWait = controller.Position;
+
+		output.WriteLine($"{playerType}: settled={settled:g}, afterWait={afterWait:g}, isPlaying={controller.IsPlaying}, state={controller.State}");
+
+		Assert.False(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+		Assert.True(afterWait >= Target - TimeSpan.FromSeconds(2), $"{playerType} position {afterWait} is before {Target}");
+		Assert.True((afterWait - settled).Duration() < TimeSpan.FromSeconds(0.5), $"{playerType} advanced from {settled} to {afterWait} while paused");
+	}
+
+	[Theory]
+	[MemberData(nameof(AllPlayers))]
+	public async Task Seeking_WhilePlaying_NeverEmitsPausedOrFlipsIsPlaying(MediaPlayerType playerType)
+	{
+		using var server = CreateServer();
+		using var controller = CreateController(playerType);
+
+		Assert.True(controller.Play(server.Url("tracks.mkv")));
+		await WaitFor(() => controller.Position >= TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(20));
+
+		var playingEvents = 0;
+		var pausedEvents = 0;
+		using var playSub = controller.Playing.Subscribe(_ => Interlocked.Increment(ref playingEvents));
+		using var pauseSub = controller.Paused.Subscribe(_ => Interlocked.Increment(ref pausedEvents));
+
+		controller.SeekTo(Target);
+		Assert.True(controller.IsPlaying);
+
+		await WaitFor(() => controller.Position >= Target + TimeSpan.FromSeconds(0.8), TimeSpan.FromSeconds(20));
+
+		Assert.True(controller.IsPlaying);
+		Assert.Equal(0, Volatile.Read(ref pausedEvents));
+		Assert.Equal(0, Volatile.Read(ref playingEvents));
+	}
+
+	private static FakeMediaServer CreateServer() =>
+		new(Path.Combine(AppContext.BaseDirectory, "Media", "switch"), ServerDelay);
+
+	private static IMediaPlayerController CreateController(MediaPlayerType type)
+	{
+		if (type == MediaPlayerType.Flyleaf)
+		{
+			FlyleafAudioPlaybackTests.StartEngine();
+		}
+
+		return type switch
+		{
+			MediaPlayerType.WindowsMediaPlayer => new WindowsMediaPlayerController(),
+			MediaPlayerType.Vlc => new VlcMediaPlayerController(),
+			MediaPlayerType.Flyleaf => new FlyleafMediaPlayerController(),
+			_ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
+		};
+	}
+
+	private static async Task WaitFor(Func<bool> condition, TimeSpan timeout)
+	{
+		var end = DateTime.UtcNow + timeout;
+		while (DateTime.UtcNow < end && !condition())
+		{
+			await Task.Delay(50);
+		}
+	}
+}

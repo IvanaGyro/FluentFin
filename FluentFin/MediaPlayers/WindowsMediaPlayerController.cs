@@ -1,11 +1,13 @@
 using System.Reactive;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using DynamicData;
 using FluentFin.Core.Contracts.Services;
 using Microsoft.UI.Xaml.Controls;
 using ReactiveMarbles.ObservableEvents;
 using FluentFin.Core;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Windows.Media.Core;
 
 namespace FluentFin.MediaPlayers
@@ -31,49 +33,114 @@ namespace FluentFin.MediaPlayers
 		private Windows.Media.Playback.MediaPlaybackItem? _mediaItem;
 		private int? _wantedAudioOrdinal;
 		private volatile bool _opened;
-		private readonly Button _audioTracksButton;
+		private volatile bool _holding;
+		private volatile bool _keepIntentOnOpen;
+		private readonly Button? _audioTracksButton;
 		private readonly WmpSeeker _seeker;
-		private readonly ILogger _logger = App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
+		private readonly Subject<Unit> _playing = new();
+		private readonly Subject<Unit> _paused = new();
+		private readonly ILogger _logger = CreateLogger();
 
-		public WindowsMediaPlayerController(MediaPlayerElement element, Button audioTracksButton)
+		private static ILogger CreateLogger()
+		{
+			try
+			{
+				return App.GetService<ILoggerFactory>().CreateLogger("FluentFin.WindowsMediaPlayer");
+			}
+			catch
+			{
+				return NullLogger.Instance;
+			}
+		}
+
+		public WindowsMediaPlayerController(MediaPlayerElement? element = null, Button? audioTracksButton = null)
 		{
 			_audioTracksButton = audioTracksButton;
 			_seeker = new WmpSeeker(_mp);
 
-			// black while the media loads: the player shows the start of the media before it is where the item resumes
 			_seeker.VideoVisibleChanged.Subscribe(visible =>
 			{
 				_logger.LogInformation("Video {State}: position={Position:g}, playback state={PlaybackState}", visible ? "shown" : "hidden", _seeker.Position, _mp.SafeGetValue(m => m.PlaybackSession.PlaybackState, Windows.Media.Playback.MediaPlaybackState.None));
-				element.DispatcherQueue.TryEnqueue(() => element.Opacity = visible ? 1 : 0);
 			});
-			element.AreTransportControlsEnabled = false;
-			element.SetMediaPlayer(_mp);
+			if (element is not null)
+			{
+				element.AreTransportControlsEnabled = false;
+				element.SetMediaPlayer(_mp);
+			}
+
 			_mp.MediaFailed += (_, e) =>
 			{
+				if (_holding)
+				{
+					return;
+				}
+
 				LastError = $"{e.Error}: {e.ErrorMessage} (HRESULT 0x{e.ExtendedErrorCode?.HResult ?? 0:X8})";
 				_logger.LogError("Media failed: {Error}", LastError);
 			};
+			_mp.MediaEnded += (_, _) => _seeker.PlayRequested = false;
 			_mp.MediaOpened += (_, _) =>
 			{
 				_logger.LogInformation("Media opened: duration={Duration}, volume={Volume}, muted={Muted}", _mp.SafeGetValue(m => m.NaturalDuration, TimeSpan.Zero), Volume, IsMuted);
-				_audioTracksButton.DispatcherQueue.TryEnqueue(() =>
+				RunOnUi(() =>
 				{
 					_opened = true;
 
 					_seeker.OnMediaOpened(() => SelectWantedAudioTrack("media opened"));
+					if (!_seeker.PlayRequested || _holding)
+					{
+						_seeker.RequestPause();
+					}
 				});
 			};
-			_mp.PlaybackSession.PlaybackStateChanged += (s, _) => _logger.LogInformation("Playback state: {State}, position={Position:g}", s.PlaybackState, s.Position);
+			_mp.PlaybackSession.PlaybackStateChanged += (s, _) =>
+			{
+				_logger.LogInformation("Playback state: {State}, position={Position:g}", s.PlaybackState, s.Position);
+				if ((!_seeker.PlayRequested || _holding) && s.PlaybackState == Windows.Media.Playback.MediaPlaybackState.Playing)
+				{
+					_seeker.RequestPause();
+				}
+			};
 			_mp.PlaybackSession.SeekCompleted += (s, _) => _logger.LogInformation("Seek completed: position={Position:g}", s.Position);
 			_mp.PlaybackSession.BufferingStarted += (s, _) => _logger.LogInformation("Buffering started: position={Position:g}", s.Position);
 			_mp.PlaybackSession.BufferingEnded += (s, _) => _logger.LogInformation("Buffering ended: position={Position:g}", s.Position);
+		}
+
+		private void RunOnUi(Action action)
+		{
+			if (_audioTracksButton?.DispatcherQueue is { } queue)
+			{
+				queue.TryEnqueue(() => action());
+			}
+			else
+			{
+				action();
+			}
+		}
+
+		private void SetIsPlaying(bool playing)
+		{
+			if (_seeker.PlayRequested == playing)
+			{
+				return;
+			}
+
+			_seeker.PlayRequested = playing;
+			if (playing)
+			{
+				_playing.OnNext(Unit.Default);
+			}
+			else
+			{
+				_paused.OnNext(Unit.Default);
+			}
 		}
 
 		public string? LastError { get; private set; }
 
 		public MediaPlayerState State => ConvertState(_mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed));
 		public TimeSpan Position => _seeker.Position;
-		public bool IsPlaying => _mp.SafeGetValue(mp => mp.CurrentState, Windows.Media.Playback.MediaPlayerState.Closed) is Windows.Media.Playback.MediaPlayerState.Playing;
+		public bool IsPlaying => _seeker.PlayRequested;
 		public bool IsMuted => _mp.SafeGetValue(mp => mp.IsMuted, false);
 		public int? SubtitleTrackIndex => null;
 		public int? AudioTrackIndex => null;
@@ -107,10 +174,10 @@ namespace FluentFin.MediaPlayers
 
 		public IObservable<TimeSpan> DurationChanged => _mp.SafeGetValue(mp => mp.PlaybackSession, null)?.Events().NaturalDurationChanged.Select(_ => _mp.SafeGetValue(mp => mp.NaturalDuration, TimeSpan.Zero)).Where(d => d > TimeSpan.Zero) ?? Observable.Empty<TimeSpan>();
 		public IObservable<TimeSpan> PositionChanged => _seeker.PositionChanged;
-		public IObservable<Unit> Playing => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Playing).Select(_ => Unit.Default);
-		public IObservable<Unit> Paused => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Paused).Select(_ => Unit.Default);
+		public IObservable<Unit> Playing => _playing;
+		public IObservable<Unit> Paused => _paused;
 		public IObservable<Unit> Ended => _mp.Events().MediaEnded.Select(_ => Unit.Default);
-		public IObservable<Unit> Errored => _mp.Events().MediaFailed.Select(_ => Unit.Default);
+		public IObservable<Unit> Errored => _mp.Events().MediaFailed.Where(_ => !_holding).Select(_ => Unit.Default);
 		public IObservable<Unit> Stopped => _mp.PlaybackSession.Events().PlaybackStateChanged.Where(_ => _mp.CurrentState is Windows.Media.Playback.MediaPlayerState.Stopped).Select(_ => Unit.Default);
 		public IObservable<Unit> MediaLoaded => _mp.Events().MediaOpened.Select(_ => Unit.Default);
 		public IObservable<double> VolumeChanged => _mp.Events().VolumeChanged.Select(_ => _mp.Volume);
@@ -198,31 +265,33 @@ namespace FluentFin.MediaPlayers
 
 		public void Pause()
 		{
-			_seeker.PlayRequested = false;
-			_seeker.CancelPlayWhenSeeked();
-			try
+			if (_holding)
 			{
-				_mp.Pause();
+				_keepIntentOnOpen = true;
 			}
-			catch { }
+
+			SetIsPlaying(false);
+			_seeker.RequestPause();
 		}
 
 		public bool Play()
 		{
-			_seeker.PlayRequested = true;
-			_seeker.CancelPlayWhenSeeked();
-			try
+			if (_holding)
 			{
-				// Stop() released the source, the play session of that media has ended on the server
-				// and must not be reused, new media has to be opened with Play(Uri) instead
-				if (_mp.Source is null)
-				{
-					return false;
-				}
-
-				_mp.Play();
+				_keepIntentOnOpen = true;
+				SetIsPlaying(true);
+				return true;
 			}
-			catch { }
+
+			// Stop() released the source, the play session of that media has ended on the server
+			// and must not be reused, new media has to be opened with Play(Uri) instead
+			if (_mp.Source is null)
+			{
+				return false;
+			}
+
+			SetIsPlaying(true);
+			_seeker.RequestPlay();
 			return true;
 		}
 
@@ -230,19 +299,40 @@ namespace FluentFin.MediaPlayers
 		{
 			_wantedAudioOrdinal = audioTrackOrdinal;
 			_opened = false;
+			_holding = false;
 			_seeker.BeginLoading();
-			_seeker.PlayRequested = true;
+			if (_keepIntentOnOpen)
+			{
+				_keepIntentOnOpen = false;
+			}
+			else
+			{
+				SetIsPlaying(true);
+			}
+
 			LastError = null;
 			_logger.LogInformation("Opening {Url} (audio ordinal={Ordinal}, default audio index={Default})", uri.MaskApiKey(), audioTrackOrdinal, defaultAudioIndex);
 			var source = MediaSource.CreateFromUri(uri);
 			_mediaItem = new Windows.Media.Playback.MediaPlaybackItem(source);
-			_mediaItem.AudioTracksChanged += (sender, args) => _audioTracksButton.DispatcherQueue.TryEnqueue(() =>
+			_mediaItem.AudioTracksChanged += (sender, args) => RunOnUi(() =>
 			{
 				LogAudioTracks();
-				_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, defaultAudioIndex);
+				if (_audioTracksButton is not null)
+				{
+					_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, defaultAudioIndex);
+				}
 			});
 			_mp.Source = _mediaItem;
 			_mp.Play();
+			if (_seeker.Target is { } target && target > TimeSpan.Zero)
+			{
+				_seeker.SeekTo(target);
+			}
+			else if (!_seeker.PlayRequested)
+			{
+				_seeker.RequestPause();
+			}
+
 			return true;
 		}
 
@@ -296,7 +386,21 @@ namespace FluentFin.MediaPlayers
 
 		public void SeekTo(TimeSpan timeSpan) => _seeker.SeekTo(timeSpan);
 
-		public void HoldPosition(TimeSpan? position) => _seeker.Hold(position);
+		public void HoldPosition(TimeSpan? position)
+		{
+			if (position is not null)
+			{
+				_holding = true;
+				_keepIntentOnOpen = _mediaItem is not null || _keepIntentOnOpen;
+			}
+			else
+			{
+				_holding = false;
+				_keepIntentOnOpen = false;
+			}
+
+			_seeker.Hold(position);
+		}
 
 		/// <summary>
 		/// Unlike <see cref="Pause"/>, releases the media source so that the network stream is closed.
@@ -304,6 +408,10 @@ namespace FluentFin.MediaPlayers
 		public void Stop()
 		{
 			_logger.LogInformation("Stopping, releasing the media source");
+			_holding = false;
+			_keepIntentOnOpen = false;
+			_seeker.PlayRequested = false;
+			_seeker.CancelPlayWhenSeeked();
 			try
 			{
 				_mp.Pause();
@@ -318,10 +426,10 @@ namespace FluentFin.MediaPlayers
 		{
 			return state switch
 			{
-				Windows.Media.Playback.MediaPlayerState.Opening => MediaPlayerState.Opening,
+				Windows.Media.Playback.MediaPlayerState.Opening or Windows.Media.Playback.MediaPlayerState.Buffering => MediaPlayerState.Opening,
 				Windows.Media.Playback.MediaPlayerState.Playing => MediaPlayerState.Playing,
 				Windows.Media.Playback.MediaPlayerState.Paused => MediaPlayerState.Paused,
-				Windows.Media.Playback.MediaPlayerState.Stopped => MediaPlayerState.Stopped,
+				Windows.Media.Playback.MediaPlayerState.Stopped or Windows.Media.Playback.MediaPlayerState.Closed => MediaPlayerState.Stopped,
 				_ => MediaPlayerState.Error,
 			};
 		}

@@ -1,4 +1,4 @@
-﻿using System.Reactive;
+using System.Reactive;
 
 namespace FluentFin.Core.Contracts.Services;
 
@@ -86,12 +86,12 @@ public static class MediaPlayerControllerExtensions
 			return;
 		}
 
-		if (controller.State is MediaPlayerState.Playing)
+		if (controller.IsPlaying)
 		{
 			await (client?.SignalPauseForSyncPlay() ?? Task.CompletedTask);
 			controller.Pause();
 		}
-		else if (controller.State is MediaPlayerState.Paused)
+		else
 		{
 			await (client?.SignalUnpauseForSyncPlay() ?? Task.CompletedTask);
 			controller.Play();

@@ -20,6 +20,7 @@ internal sealed class WmpSeeker
 	private readonly Subject<bool> _videoVisible = new();
 	private readonly object _gate = new();
 	private volatile bool _opened;
+	private volatile bool _holding;
 	private volatile bool _buffering;
 	private volatile bool _seekRequested;
 	private volatile bool _seekCompleted;
@@ -83,11 +84,14 @@ internal sealed class WmpSeeker
 
 	public IObservable<bool> VideoVisibleChanged => _videoVisible;
 
+	public TimeSpan? Target => _seek.Target;
+
 	/// <summary>New media is being loaded: its video is hidden until it is where it has to be.</summary>
 	public void BeginLoading()
 	{
 		lock (_gate)
 		{
+			_holding = false;
 			_opened = false;
 			_buffering = false;
 			_seekTarget = _seek.Target;
@@ -135,7 +139,7 @@ internal sealed class WmpSeeker
 		var state = _mp.SafeGetValue(mp => mp.PlaybackSession.PlaybackState, MediaPlaybackState.None);
 		lock (_gate)
 		{
-			if (IsVideoVisible)
+			if (IsVideoVisible || _holding)
 			{
 				return;
 			}
@@ -162,7 +166,7 @@ internal sealed class WmpSeeker
 		{
 			lock (_gate)
 			{
-				return _opened && (!_seekRequested || _seekCompleted);
+				return !_holding && _opened && (!_seekRequested || _seekCompleted);
 			}
 		}
 	}
@@ -190,6 +194,7 @@ internal sealed class WmpSeeker
 		{
 			lock (_gate)
 			{
+				_holding = false;
 				_seekTarget = null;
 				_seekRequested = false;
 			}
@@ -198,13 +203,44 @@ internal sealed class WmpSeeker
 			return;
 		}
 
-		_seek.Set(held);
-		_shown.OnNext(held);
-		BeginLoading();
+		lock (_gate)
+		{
+			_holding = true;
+			_opened = false;
+			_buffering = false;
+			_seekTarget = held > TimeSpan.Zero ? held : null;
+			_seekRequested = held > TimeSpan.Zero;
+			_seekCompleted = false;
+			_loadingSince = DateTimeOffset.UtcNow;
+		}
+
+		if (held > TimeSpan.Zero)
+		{
+			_seek.Set(held);
+			_shown.OnNext(held);
+		}
+		else
+		{
+			_seek.Clear();
+		}
+
+		SetVideoVisible(false);
+		try
+		{
+			_mp.Pause();
+		}
+		catch
+		{
+		}
 	}
 
 	public void SeekTo(TimeSpan time)
 	{
+		lock (_gate)
+		{
+			_holding = false;
+		}
+
 		if (CanSeekNow)
 		{
 			if (!IsVideoVisible)
@@ -270,6 +306,7 @@ internal sealed class WmpSeeker
 		PlayIfWaiting();
 		lock (_gate)
 		{
+			_holding = false;
 			_opened = true;
 		}
 
@@ -289,6 +326,50 @@ internal sealed class WmpSeeker
 
 	/// <summary>The app plays or pauses by itself, the player does not play on its own once it is at the position.</summary>
 	public void CancelPlayWhenSeeked() => _playWhenSeeked = false;
+
+	public void RequestPause()
+	{
+		PlayRequested = false;
+		_playWhenSeeked = false;
+		try
+		{
+			_mp.Pause();
+		}
+		catch
+		{
+		}
+	}
+
+	public void RequestPlay()
+	{
+		PlayRequested = true;
+		bool waitForOpen;
+		lock (_gate)
+		{
+			if (_holding)
+			{
+				return;
+			}
+
+			waitForOpen = !_opened && _seekRequested;
+		}
+
+		if (waitForOpen)
+		{
+			_playWhenSeeked = true;
+			_ = PlayAnywayLater();
+			return;
+		}
+
+		_playWhenSeeked = false;
+		try
+		{
+			_mp.Play();
+		}
+		catch
+		{
+		}
+	}
 
 	private volatile bool _playWhenSeeked;
 
@@ -328,7 +409,7 @@ internal sealed class WmpSeeker
 
 	private void ApplyPendingSeek(TimeSpan reported)
 	{
-		if (_seek.Target is { } target && _seek.NeedsSeek(reported) && CanSeekNow)
+		if (!_holding && _seek.Target is { } target && _seek.NeedsSeek(reported) && CanSeekNow)
 		{
 			SetPosition(target);
 			PlayIfWaiting();

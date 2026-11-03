@@ -142,18 +142,7 @@ public sealed partial class TransportControls : UserControl
 			{
 				try
 				{
-					var currentState = Player.State;
-					if (currentState is MediaPlayerState.Playing)
-					{
-						Player.Pause();
-					}
-
 					Player.SeekTo(TimeSpan.FromMilliseconds(x.NewValue));
-
-					if (currentState is MediaPlayerState.Playing)
-					{
-						Player.Play();
-					}
 				}
 				catch { }
 			});

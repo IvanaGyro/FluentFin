@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
@@ -13,31 +14,149 @@ namespace FluentFin.MediaPlayers
 	{
 		private readonly LibVLC _libVLC;
 		private readonly MediaPlayer _mp;
-		private readonly Button _audioTracksButton;
+		private readonly Button? _audioTracksButton;
 		private Media? _media;
 		private int _defaultAudioIndex;
 		private int? _pendingAudioOrdinal;
+		private volatile bool _isPlaying;
+		private volatile bool _opened;
+		private volatile bool _holding;
+		private volatile bool _keepIntentOnOpen;
+		private volatile bool _disposed;
 		private readonly PendingSeek _seek = new();
 		private readonly Subject<TimeSpan> _seekPosition = new();
+		private readonly Subject<Unit> _playing = new();
+		private readonly Subject<Unit> _paused = new();
 		private readonly IObservable<TimeSpan> _positionChanged;
 
-		public VlcMediaPlayerController(IVideoView view, string[] swapChainOptions, Button audioTracksButton)
+		public VlcMediaPlayerController(IVideoView? view = null, string[]? swapChainOptions = null, Button? audioTracksButton = null)
 		{
-			_libVLC = new LibVLC(enableDebugLogs: false, swapChainOptions);
+			_libVLC = new LibVLC(enableDebugLogs: false, swapChainOptions ?? []);
 			_mp = new MediaPlayer(_libVLC);
 			_audioTracksButton = audioTracksButton;
-			view.MediaPlayer = _mp;
+			if (view is not null)
+			{
+				view.MediaPlayer = _mp;
+			}
+
 			_libVLC.Log += OnLibVlcLog;
+			_mp.Playing += (_, _) => ScheduleSyncBackendState();
+			_mp.Paused += (_, _) => ScheduleSyncBackendState();
+			_mp.SeekableChanged += (_, _) => ScheduleSyncBackendState();
+			_mp.TimeChanged += (_, _) => ScheduleSyncBackendState();
+			_mp.EndReached += (_, _) => _isPlaying = false;
 
 			// shared, so that the seek is applied once per event whoever listens
 			_positionChanged = Observable.Merge(
-					_mp.Events().TimeChanged.Select(e => TimeSpan.FromMilliseconds(e.Time)).Do(ApplyPendingSeek).Where(_seek.ShouldReport),
+					_mp.Events().TimeChanged.Where(_ => CanEndSeek).Select(e => TimeSpan.FromMilliseconds(e.Time)).Where(ShouldReportPosition),
 					_seekPosition,
 					_seek.Reminders(TimeSpan.FromMilliseconds(250)))
 				.Publish()
 				.RefCount();
+		}
 
-			PositionChanged.Subscribe(p => Position = p);
+		private bool CanEndSeek => !_holding && _opened;
+
+		private TimeSpan ActualPosition
+		{
+			get
+			{
+				try
+				{
+					var time = _mp.Time;
+					return time > 0 ? TimeSpan.FromMilliseconds(time) : TimeSpan.Zero;
+				}
+				catch
+				{
+					return TimeSpan.Zero;
+				}
+			}
+		}
+
+		private bool ShouldReportPosition(TimeSpan actual) =>
+			(actual > TimeSpan.Zero || _seek.Target is not { Ticks: > 0 }) && _seek.ShouldReport(actual);
+
+		private void SetIsPlaying(bool playing)
+		{
+			if (_isPlaying == playing)
+			{
+				return;
+			}
+
+			_isPlaying = playing;
+			if (playing)
+			{
+				_playing.OnNext(Unit.Default);
+			}
+			else
+			{
+				_paused.OnNext(Unit.Default);
+			}
+		}
+
+		private void ScheduleSyncBackendState()
+		{
+			if (_disposed)
+			{
+				return;
+			}
+
+			ThreadPool.QueueUserWorkItem(_ => SyncBackendState());
+		}
+
+		private void SyncBackendState()
+		{
+			if (_disposed)
+			{
+				return;
+			}
+
+			try
+			{
+				if (_holding)
+				{
+					if (_mp.IsPlaying)
+					{
+						_mp.SetPause(true);
+					}
+
+					return;
+				}
+
+				if (_mp.IsSeekable && _seek.Target is { } target)
+				{
+					var actual = ActualPosition;
+					if (_seek.NeedsSeek(actual))
+					{
+						_mp.SeekTo(target);
+					}
+					else if (actual > TimeSpan.Zero || target == TimeSpan.Zero)
+					{
+						_opened = true;
+					}
+				}
+				else if (_seek.Target is null && _mp.State is VLCState.Playing or VLCState.Paused)
+				{
+					_opened = true;
+				}
+
+				if (!_isPlaying && _mp.IsPlaying && (_seek.Target is null || (_mp.IsSeekable && !_seek.NeedsSeek(ActualPosition))))
+				{
+					_mp.SetPause(true);
+				}
+			}
+			catch
+			{
+			}
+		}
+
+		private async Task PauseOnceSeekedAsync()
+		{
+			for (var i = 0; i < 60 && !_disposed && !_isPlaying && !_holding; i++)
+			{
+				await Task.Delay(50);
+				SyncBackendState();
+			}
 		}
 
 		private readonly Queue<string> _recentLog = new();
@@ -75,8 +194,37 @@ namespace FluentFin.MediaPlayers
 		public void OpenInternalSubtitleTrack(int trackIndex, int subtitleIndex) => _mp.SetSpu(trackIndex);
 		public void DisableSubtitles() => _mp.SetSpu(-1);
 		public void OpenAudioTrack(int index) => _mp.SetAudioTrack(index);
-		public void Pause() => _mp.Pause();
-		public bool Play() => _mp.Play();
+
+		public void Pause()
+		{
+			if (_holding)
+			{
+				_keepIntentOnOpen = true;
+			}
+
+			SetIsPlaying(false);
+			SyncBackendState();
+			_ = PauseOnceSeekedAsync();
+		}
+
+		public bool Play()
+		{
+			if (_holding)
+			{
+				_keepIntentOnOpen = true;
+				SetIsPlaying(true);
+				return true;
+			}
+
+			if (_media is null)
+			{
+				return false;
+			}
+
+			SetIsPlaying(true);
+			return _mp.Play();
+		}
+
 		public bool Play(Uri uri, int defaultAudioIndex = 0, int? audioTrackOrdinal = null)
 		{
 			if (_media is not null)
@@ -84,18 +232,42 @@ namespace FluentFin.MediaPlayers
 				_media.ParsedChanged -= MediaParsed;
 			}
 
-			// the position is cached from TimeChanged and would still be the one of the previous media
-			Position = _seek.Target ?? TimeSpan.Zero;
+			_holding = false;
+			_opened = false;
+			if (_keepIntentOnOpen)
+			{
+				_keepIntentOnOpen = false;
+			}
+			else
+			{
+				SetIsPlaying(true);
+			}
+
 			lock (_recentLog)
 			{
 				_recentLog.Clear();
 			}
 
 			_media = new Media(_libVLC, uri);
+			if (_seek.Target is { } start && start > TimeSpan.Zero)
+			{
+				_media.AddOption($":start-time={start.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture)}");
+			}
+			else if (!_isPlaying)
+			{
+				_media.AddOption(":start-paused");
+			}
+
 			_defaultAudioIndex = defaultAudioIndex;
 			_pendingAudioOrdinal = audioTrackOrdinal;
 			_media.ParsedChanged += MediaParsed;
-			return _mp.Play(_media);
+			var result = _mp.Play(_media);
+			if (!_isPlaying)
+			{
+				_ = PauseOnceSeekedAsync();
+			}
+
+			return result;
 		}
 
 		private void ApplyPendingAudioTrack()
@@ -115,19 +287,49 @@ namespace FluentFin.MediaPlayers
 			OpenAudioTrack(tracks[ordinal].Id);
 		}
 
-		public void Stop() => _mp.Stop();
+		public void Stop()
+		{
+			_holding = false;
+			_keepIntentOnOpen = false;
+			_opened = false;
+			_isPlaying = false;
+			_media = null;
+			_mp.Stop();
+		}
 
 		public void HoldPosition(TimeSpan? position)
 		{
 			if (position is not { } held)
 			{
+				_holding = false;
+				_keepIntentOnOpen = false;
 				_seek.Clear();
 				return;
 			}
 
-			_seek.Set(held);
-			Position = held;
-			_seekPosition.OnNext(held);
+			_holding = true;
+			_opened = false;
+			_keepIntentOnOpen = _media is not null || _keepIntentOnOpen;
+			if (held > TimeSpan.Zero)
+			{
+				_seek.Set(held);
+				_seekPosition.OnNext(held);
+			}
+			else
+			{
+				_seek.Clear();
+			}
+
+			try
+			{
+				if (_mp.IsPlaying)
+				{
+					_mp.SetPause(true);
+				}
+			}
+			catch
+			{
+			}
 		}
 
 		/// <summary>
@@ -136,33 +338,38 @@ namespace FluentFin.MediaPlayers
 		/// </summary>
 		public void SeekTo(TimeSpan time)
 		{
+			_holding = false;
+			_seek.Set(time);
+			_seekPosition.OnNext(time);
 			if (_mp.State is VLCState.Playing or VLCState.Paused && _mp.IsSeekable)
 			{
-				_seek.Clear();
 				_mp.SeekTo(time);
-				return;
 			}
-
-			_seek.Set(time);
-			Position = time;
-			_seekPosition.OnNext(time);
 		}
 
-		private void ApplyPendingSeek(TimeSpan reported)
+		public void Dispose()
 		{
-			if (_seek.Target is { } target && _seek.NeedsSeek(reported) && _mp.IsSeekable)
-			{
-				_mp.SeekTo(target);
-			}
+			_disposed = true;
+			_mp.Dispose();
+			_libVLC.Dispose();
 		}
-		public void Dispose() => _mp.Dispose();
+
 		public SourceAudioMenu? SourceAudioMenu { get; set; }
 
 		public IEnumerable<Core.Contracts.Services.AudioTrack> GetAudioTracks() => _mp.Media?.Tracks.Where(x => x.TrackType == TrackType.Audio).Select(x => new Core.Contracts.Services.AudioTrack(x.Id, x.Language, x.Description)) ?? [];
 
 		public MediaPlayerState State => ConvertState(_mp.State);
-		public TimeSpan Position { get; private set; }
-		public bool IsPlaying => _mp.IsPlaying;
+
+		public TimeSpan Position
+		{
+			get
+			{
+				var actual = ActualPosition;
+				return CanEndSeek && ShouldReportPosition(actual) ? actual : _seek.Target ?? actual;
+			}
+		}
+
+		public bool IsPlaying => _isPlaying;
 		public bool IsMuted => _mp.Mute;
 		public int? SubtitleTrackIndex => _mp.Spu == -1 ? null : _mp.Spu;
 		public int? AudioTrackIndex => _mp.AudioTrack == -1 ? null : _mp.AudioTrack;
@@ -190,10 +397,10 @@ namespace FluentFin.MediaPlayers
 
 		public IObservable<TimeSpan> DurationChanged => _mp.Events().LengthChanged.Select(e => TimeSpan.FromMilliseconds(e.Length)).Where(d => d > TimeSpan.Zero);
 		public IObservable<TimeSpan> PositionChanged => _positionChanged;
-		public IObservable<Unit> Playing => _mp.Events().Playing.Select(_ => Unit.Default);
-		public IObservable<Unit> Paused => _mp.Events().Paused.Select(_ => Unit.Default);
+		public IObservable<Unit> Playing => _playing;
+		public IObservable<Unit> Paused => _paused;
 		public IObservable<Unit> Ended => _mp.Events().EndReached.Select(_ => Unit.Default);
-		public IObservable<Unit> Errored => _mp.Events().EncounteredError.Select(_ => Unit.Default);
+		public IObservable<Unit> Errored => _mp.Events().EncounteredError.Where(_ => !_holding).Select(_ => Unit.Default);
 		public IObservable<Unit> Stopped => _mp.Events().Stopped.Select(_ => Unit.Default);
 		public IObservable<Unit> MediaLoaded => _mp.Events().MediaChanged.Select(_ => Unit.Default);
 		public IObservable<double> VolumeChanged => _mp.Events().VolumeChanged.Select(e => e.Volume * 100d);
@@ -203,11 +410,18 @@ namespace FluentFin.MediaPlayers
 		{
 			if (e.ParsedStatus == MediaParsedStatus.Done)
 			{
-				_audioTracksButton.DispatcherQueue.TryEnqueue(() =>
+				if (_audioTracksButton?.DispatcherQueue is { } queue)
 				{
-					_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, _defaultAudioIndex);
+					queue.TryEnqueue(() =>
+					{
+						_audioTracksButton.Flyout = Converters.Converters.GetAudiosFlyout(this, _defaultAudioIndex);
+						ApplyPendingAudioTrack();
+					});
+				}
+				else
+				{
 					ApplyPendingAudioTrack();
-				});
+				}
 			}
 		}
 
@@ -215,7 +429,7 @@ namespace FluentFin.MediaPlayers
 		{
 			return state switch
 			{
-				VLCState.Opening => MediaPlayerState.Opening,
+				VLCState.NothingSpecial or VLCState.Opening or VLCState.Buffering => MediaPlayerState.Opening,
 				VLCState.Playing => MediaPlayerState.Playing,
 				VLCState.Paused => MediaPlayerState.Paused,
 				VLCState.Stopped => MediaPlayerState.Stopped,
