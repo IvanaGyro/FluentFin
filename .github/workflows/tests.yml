@@ -44,7 +44,7 @@ jobs:
             Start-Service Audiosrv
 
     -   name: 'Test the app'
-        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --blame-hang-timeout 5m --blame-hang-dump-type none
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --blame-hang-timeout 5m --blame-hang-dump-type none --logger "console;verbosity=normal"
 
     # what Windows Media Player plays is measured with the peak meter of the device: show the numbers also when it passes
     -   name: 'Show what Windows Media Player plays'

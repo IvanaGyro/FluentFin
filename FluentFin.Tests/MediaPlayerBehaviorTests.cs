@@ -273,7 +273,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		var task = Task.Run(action);
 		if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30))) != task)
 		{
-			throw new TimeoutException($"{playerType}: {call} did not return in 30 s");
+			throw new TimeoutException($"{playerType}: {call} did not return in 30 s. {FlyleafPlayers()}");
 		}
 
 		var result = await task;
@@ -311,6 +311,20 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		Assert.Equal(0, Volatile.Read(ref playingEvents));
 	}
 
+	/// <summary>The players of Flyleaf that are not disposed: one left by an earlier test keeps decoding and can block the next one.</summary>
+	internal static string FlyleafPlayers()
+	{
+		try
+		{
+			var players = FlyleafLib.Engine.IsLoaded ? FlyleafLib.Engine.Players.ToList() : [];
+			return $"Flyleaf players not disposed: {players.Count}" + string.Concat(players.Select(p => $"; #{p.PlayerId} {p.Status} at {TimeSpan.FromTicks(p.CurTime)}"));
+		}
+		catch (Exception ex)
+		{
+			return "Flyleaf players: " + ex.Message;
+		}
+	}
+
 	private static FakeMediaServer CreateServer() =>
 		new(Path.Combine(AppContext.BaseDirectory, "Media", "switch"), ServerDelay);
 
@@ -319,6 +333,7 @@ public sealed class MediaPlayerBehaviorTests(ITestOutputHelper output)
 		if (type == MediaPlayerType.Flyleaf)
 		{
 			FlyleafAudioPlaybackTests.StartEngine();
+			Console.WriteLine($"MediaPlayerBehaviorTests: creating a Flyleaf player. {FlyleafPlayers()}");
 		}
 
 		return type switch

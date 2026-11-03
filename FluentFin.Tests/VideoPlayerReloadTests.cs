@@ -236,6 +236,7 @@ public sealed class VideoPlayerReloadTests(ITestOutputHelper output)
 		if (type == MediaPlayerType.Flyleaf)
 		{
 			FlyleafAudioPlaybackTests.StartEngine();
+			Console.WriteLine($"VideoPlayerReloadTests: creating a Flyleaf player. {MediaPlayerBehaviorTests.FlyleafPlayers()}");
 		}
 
 		return type switch
