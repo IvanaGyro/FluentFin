@@ -235,9 +235,10 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 	}
 
 	/// <summary>
-	/// A seek while the open stream buffers (it played to the end of a segment and the server is slow to send the next one): the player
-	/// cannot seek in that state, the seek is made all the same, and the time bar follows the player again once it plays. The media does
-	/// not open a second time.
+	/// A seek while the open stream buffers at the position it resumes at, as after a switch to a transcode (the media is open, the
+	/// segment of the position takes the server seconds; 15 s for a 4K transcode in the log of the handoff): the player cannot seek in that
+	/// state and the media does not open a second time. The seek is made all the same, and the time bar follows the player once it plays.
+	/// In the middle of the stream the player keeps the state Playing while it waits for a segment, and can seek there.
 	/// </summary>
 	[Fact]
 	public async Task ASeekWhileTheOpenStreamBuffers_LetsTheTimeBarFollowThePlayerAgain()
@@ -252,17 +253,22 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		using var subscription = seeker.PositionChanged.Subscribe(x => { lock (shown) { shown.Add(x); } });
 		var states = new List<string>();
 		player.PlaybackSession.PlaybackStateChanged += (s, _) => { lock (states) { states.Add($"{s.PlaybackState}@{s.Position.TotalSeconds:0.0}"); } };
-		player.MediaOpened += (_, _) => seeker.NotifyOpened();
+		var opened = false;
+		player.MediaOpened += (_, _) =>
+		{
+			seeker.NotifyOpened();
+			Volatile.Write(ref opened, true);
+		};
 
+		// opened with the resume position, which is in the segment that takes its time
 		player.Source = new MediaPlaybackItem(MediaSource.CreateFromUri(server.Url("index.m3u8")));
-		seeker.PlayRequested = true;
 		player.Play();
-		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(15));
-
-		// the first segment plays to its end (4 s) and the player waits for the second one, which the server sends 6 s after it was asked
-		await WaitFor(() => player.PlaybackSession.PlaybackState is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), TimeSpan.FromSeconds(10));
-		var stateAtTheSecondSeek = player.PlaybackSession.PlaybackState;
-		var second = TimeSpan.FromSeconds(5);
+		seeker.PlayRequested = true;
+		seeker.SeekTo(TimeSpan.FromSeconds(5));
+		await WaitFor(() => Volatile.Read(ref opened) && player.PlaybackSession.PlaybackState is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), TimeSpan.FromSeconds(10));
+		var stateAtTheSeek = player.PlaybackSession.PlaybackState;
+		var openedAtTheSeek = Volatile.Read(ref opened);
+		var second = TimeSpan.FromSeconds(6);
 		seeker.SeekTo(second);
 
 		await WaitFor(() => player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing && player.PlaybackSession.Position >= second + TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(20));
@@ -274,9 +280,9 @@ public sealed class WmpSeekTests(ITestOutputHelper output)
 		string history;
 		lock (states) { history = string.Join(", ", states); }
 
-		output.WriteLine($"state at the seek={stateAtTheSecondSeek}, now={player.PlaybackSession.PlaybackState}, actual={actual:g}, seeker={reported:g}, last given to the time bar={last:g}");
+		output.WriteLine($"opened at the seek={openedAtTheSeek}, state at the seek={stateAtTheSeek}, now={player.PlaybackSession.PlaybackState}, actual={actual:g}, seeker={reported:g}, last given to the time bar={last:g}");
 		output.WriteLine("states: " + history);
-		Assert.True(stateAtTheSecondSeek is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), $"the player could seek at the seek ({stateAtTheSecondSeek}), the test did not reach the case");
+		Assert.True(openedAtTheSeek && stateAtTheSeek is not (MediaPlaybackState.Playing or MediaPlaybackState.Paused), $"the media was not open and buffering at the seek (opened={openedAtTheSeek}, {stateAtTheSeek}), the test did not reach the case");
 		Assert.True(actual >= second + TimeSpan.FromSeconds(1.5), $"the player is at {actual}, it did not play on after the seek to {second}");
 		Assert.True((reported - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar shows {reported}, the player is at {actual}");
 		Assert.True((last - actual).Duration() <= TimeSpan.FromSeconds(1), $"the time bar was last given {last}, the player is at {actual}");
