@@ -150,6 +150,7 @@ public sealed class VideoPlayerViewModelSubtitleTests
 		Mock.Of<INavigationService>(),
 		Mock.Of<IPlaybackSessionManager>(),
 		Mock.Of<ISettings>(),
+		Mock.Of<IDeviceProfileFactory>(),
 		Mock.Of<ITaskBarProgress>());
 
 	private static PlaylistItem ItemPlaying(MediaResponse response) => new()

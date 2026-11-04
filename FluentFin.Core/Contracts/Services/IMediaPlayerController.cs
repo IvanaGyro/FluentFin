@@ -1,4 +1,4 @@
-﻿using System.Reactive;
+using System.Reactive;
 
 namespace FluentFin.Core.Contracts.Services;
 
@@ -13,7 +13,19 @@ public interface IMediaPlayerController : IDisposable
 	void DisableSubtitles();
 	void OpenAudioTrack(int index);
 	void SeekTo(TimeSpan timeSpan);
+
+	/// <summary>
+	/// Shows this position until the player is at it, whatever the player reports meanwhile: a stopped player and a new stream report
+	/// zero, and the time bar would go to zero while the server answers for another audio stream. Null ends it.
+	/// </summary>
+	void HoldPosition(TimeSpan? position);
 	IEnumerable<AudioTrack> GetAudioTracks();
+
+	/// <summary>
+	/// Replaces the audio menu of the player with the audio streams of the source file, as the player only sees what the server sent,
+	/// which is one stream while transcoding. Null for the tracks of the player itself.
+	/// </summary>
+	SourceAudioMenu? SourceAudioMenu { get; set; }
 
 	MediaPlayerState State { get; }
 	TimeSpan Position { get; }
@@ -60,6 +72,9 @@ public enum MediaPlayerType
 	WindowsMediaPlayer
 }
 
+/// <summary>The audio streams of the source file, by their stream index, with the one that plays and what to do when another is picked.</summary>
+public record SourceAudioMenu(IReadOnlyList<AudioTrack> Tracks, int SelectedId, Action<AudioTrack> Select);
+
 public record struct AudioTrack(int Id, string? Language, string? Name);
 
 public static class MediaPlayerControllerExtensions
@@ -71,12 +86,12 @@ public static class MediaPlayerControllerExtensions
 			return;
 		}
 
-		if (controller.State is MediaPlayerState.Playing)
+		if (controller.IsPlaying)
 		{
 			await (client?.SignalPauseForSyncPlay() ?? Task.CompletedTask);
 			controller.Pause();
 		}
-		else if (controller.State is MediaPlayerState.Paused)
+		else
 		{
 			await (client?.SignalUnpauseForSyncPlay() ?? Task.CompletedTask);
 			controller.Play();

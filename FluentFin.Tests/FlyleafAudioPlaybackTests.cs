@@ -13,6 +13,7 @@ namespace FluentFin.Tests;
 /// AC-3 5.1, AAC 5.1 and E-AC-3 stereo audio). The playback tests need an audio device; the workflows install a
 /// virtual one on the runner.
 /// </summary>
+[Collection(AudioDevice.Name)]
 public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 {
 	private static readonly object EngineLock = new();
@@ -237,8 +238,16 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 		Assert.True(errors.Count == 0, "Flyleaf logged errors:\n" + string.Join('\n', errors.Take(5)));
 	}
 
-	/// <summary>Starts Flyleaf's engine (once per process) with the app's configuration and the app's FFmpeg folder.</summary>
-	private static void StartEngine()
+	/// <summary>
+	/// Starts Flyleaf's engine (once per process) with the app's configuration and the app's FFmpeg folder, on a thread of its own that
+	/// pumps window messages, as the UI thread of the app does.
+	/// </summary>
+	/// <remarks>
+	/// Flyleaf takes the thread that starts the engine as its UI thread (the dispatcher of the WPF application it creates there) and invokes
+	/// it, and waits, when a player is created on another thread. A test thread pumps no messages: the engine was started on the thread of
+	/// the first test, only the players created on that same thread came back, and the first one created elsewhere hung the run.
+	/// </remarks>
+	internal static void StartEngine()
 	{
 		lock (EngineLock)
 		{
@@ -253,8 +262,67 @@ public sealed class FlyleafAudioPlaybackTests(ITestOutputHelper output)
 			config.LogOutput = LogFile;
 			config.LogLevel = Enum.TryParse<FlyleafLib.LogLevel>(Environment.GetEnvironmentVariable("FLYLEAF_TEST_LOG_LEVEL"), out var level) ? level : FlyleafLib.LogLevel.Info;
 			config.LogCachedLines = 0;
-			Engine.Start(config);
+
+			Exception? failure = null;
+			using var started = new ManualResetEventSlim();
+			var thread = new Thread(() =>
+			{
+				try
+				{
+					Engine.Start(config);
+				}
+				catch (Exception ex)
+				{
+					failure = ex;
+				}
+				finally
+				{
+					started.Set();
+				}
+
+				while (NativeMessages.GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+				{
+					NativeMessages.TranslateMessage(ref message);
+					NativeMessages.DispatchMessage(ref message);
+				}
+			})
+			{
+				IsBackground = true,
+				Name = "Flyleaf UI",
+			};
+			thread.SetApartmentState(ApartmentState.STA);
+			thread.Start();
+			started.Wait();
+			if (failure is not null)
+			{
+				throw new InvalidOperationException("Flyleaf's engine did not start", failure);
+			}
 		}
+	}
+
+	private static class NativeMessages
+	{
+		[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+		public struct Message
+		{
+			public IntPtr Window;
+			public uint Id;
+			public IntPtr WParam;
+			public IntPtr LParam;
+			public uint Time;
+			public int X;
+			public int Y;
+			public uint Private;
+		}
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		public static extern int GetMessage(out Message message, IntPtr window, uint min, uint max);
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		public static extern bool TranslateMessage(ref Message message);
+
+		[System.Runtime.InteropServices.DllImport("user32.dll")]
+		public static extern IntPtr DispatchMessage(ref Message message);
 	}
 
 	/// <summary>The FFmpeg folder next to the app (copied with the app's output), as the app loads it.</summary>

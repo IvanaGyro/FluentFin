@@ -1,4 +1,5 @@
-﻿using System.Reactive.Disposables;
+using System.Reactive.Disposables;
+using System.Globalization;
 using System.Reactive.Disposables.Fluent;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
@@ -30,6 +31,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 							INavigationService navigationService,
 							IPlaybackSessionManager playbackSessions,
 							ISettings settings,
+							IDeviceProfileFactory deviceProfiles,
 							ITaskBarProgress taskBarProgress) : ObservableObject, INavigationAware
 {
 	private readonly CompositeDisposable _disposables = [];
@@ -85,7 +87,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	/// Releases the player's media source and reports the current playback session as stopped, which makes the server
 	/// end its transcoding job. Safe to call repeatedly, only the first call for a session has an effect.
 	/// </summary>
-	private async Task StopPlayback(bool stopPlayer = true)
+	/// <param name="play">For a reload: whether the media that is loaded next is to play, set once the position is held, so that a
+	/// pause or play of the user while the server answers is still the last word.</param>
+	private async Task StopPlayback(bool stopPlayer = true, TimeSpan? holdPosition = null, bool reloading = false, bool play = true)
 	{
 		var session = Interlocked.Exchange(ref _session, null);
 		long? position = null;
@@ -97,7 +101,24 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 
 			if (stopPlayer)
 			{
-				MediaPlayer?.Stop();
+				if (reloading)
+				{
+					// pause in place and keep the current frame and position while the server prepares the new stream
+					MediaPlayer?.HoldPosition(holdPosition ?? TimeSpan.Zero);
+					if (play)
+					{
+						MediaPlayer?.Play();
+					}
+					else
+					{
+						MediaPlayer?.Pause();
+					}
+				}
+				else
+				{
+					MediaPlayer?.HoldPosition(null);
+					MediaPlayer?.Stop();
+				}
 			}
 		}
 		catch (Exception ex)
@@ -240,28 +261,207 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			return;
 		}
 
-		if (Playlist.SelectedItem is not { Dto.Id: not null } selectedItem)
+		_audioSwitch = null;
+		_loadFailed = false;
+
+		// a switch of the previous item that ends now was superseded, it must not touch what the player holds for this one
+		_audioSwitchRequest++;
+		await LoadSelectedItem();
+	}
+
+	/// <summary>
+	/// Asks the server for the item again with the audio stream picked in the menu, which transcodes or plays it directly
+	/// as the stream requires, and continues at the current position.
+	/// </summary>
+	private async void SwitchAudioStream(PlaylistItem item, int streamIndex)
+	{
+		// the menu of the previous item stays until the tracks of the new one arrive, a pick on it is not for the current item
+		if (!ReferenceEquals(Playlist.SelectedItem, item) || MediaPlayer is null)
 		{
 			return;
 		}
 
-		var version = Interlocked.Increment(ref _loadVersion);
+		if (!IsAudioSwitch(item.Selection, item.Media?.MediaSourceInfo, streamIndex, _loadFailed))
+		{
+			return;
+		}
 
-		// clean up the previous session first, whether or not the new media can be loaded
-		await StopPlayback();
+		// A direct play has all the audio streams of the file and the player switches, if the device profile plays the codec of the stream:
+		// no new request, no reload. Otherwise (a transcode, or a codec the player does not play) the server decides again, as in the web client.
+		if (_audioSwitch is null && !_loadFailed && TrySwitchInPlayer(item, streamIndex))
+		{
+			return;
+		}
+
+		// A second pick while the first is still loading finds the player stopped and has no position, it continues the first switch
+		// from where it began. The state belongs to this item only, it is dropped when another item is selected or the load is done.
+		var paused = _loadFailed && _audioSwitch is { } failed && ReferenceEquals(failed.Item, item)
+			? failed.Paused
+			: !MediaPlayer.IsPlaying;
+		var state = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item)
+			? pending with { Paused = paused }
+			: new AudioSwitchState(item, GetKnownPosition(), paused, item.Selection);
+		_audioSwitch = state;
+		var request = ++_audioSwitchRequest;
+		_loadFailed = false;
+		// what played before the chain of picks began, not the selection of a pick that was superseded
+		var previousSelection = state.PreviousSelection;
+		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
+
+		logger.LogInformation("Audio switch #{Request}: stream {Index} for {Name}, resume at {Ticks}, paused={Paused}, previous selection={Previous}",
+			request, streamIndex, item.Dto.Name, state.Ticks, state.Paused, previousSelection);
+
+		var loaded = false;
+		try
+		{
+			loaded = await LoadSelectedItem(state.Ticks, state.Paused);
+			logger.LogInformation("Audio switch #{Request}: load ended, playing={Loaded}, play method={PlayMethod}", request, loaded, item.Media?.PlayMethod);
+		}
+		catch (Exception ex)
+		{
+			logger.LogError(ex, "Unable to switch to audio stream {Index}", streamIndex);
+		}
+
+		// the request failed, the stream can be picked again
+		if (SwitchFailed(item.Selection, streamIndex, loaded, request, _audioSwitchRequest))
+		{
+			_loadFailed = true;
+			if (ReferenceEquals(Playlist.SelectedItem, item))
+			{
+				MediaPlayer?.HoldPosition(null);
+			}
+			// the resume state is kept for the retry: the player is stopped, it has no position to give any more
+			// only the audio is undone: the subtitle may have been changed in the menu while the request was pending
+			item.Selection = RestoreAudio(item.Selection, previousSelection);
+		}
+	}
+
+	/// <summary>
+	/// A switch has failed when the load did not end in playback (no media, or the player could not open it) and no other pick has
+	/// taken over the selection since, which would have ended the load too.
+	/// </summary>
+	internal static bool SwitchFailed(PlaybackSelection? selection, int requested, bool loaded, int request, int latestRequest) =>
+		!loaded && request == latestRequest && selection?.AudioStreamIndex == requested;
+
+	/// <summary>Numbers the picks, only the latest one may undo the selection, an older one that ends later was superseded and did not fail.</summary>
+	private int _audioSwitchRequest;
+
+	/// <summary>
+	/// Whether picking the stream changes what plays. The selection is set when a switch starts, so it is the stream to compare with
+	/// also while that switch is still loading: picking the stream that played before it supersedes the switch.
+	/// </summary>
+	internal static bool IsAudioSwitch(PlaybackSelection? selection, MediaSourceInfo? playing, int requested, bool loadFailed = false) =>
+		loadFailed || requested != (selection?.AudioStreamIndex ?? playing?.DefaultAudioStreamIndex);
+
+	/// <summary>A switch failed and the player is stopped: every pick is a switch, also the stream that played before.</summary>
+	private bool _loadFailed;
+
+	private bool TrySwitchInPlayer(PlaylistItem item, int streamIndex)
+	{
+		if (item.Media is not { } media || MediaPlayer is null
+			|| !AudioSwitchPolicy.CanSwitchInPlayer(media.PlayMethod, media.MediaSourceInfo, streamIndex, deviceProfiles.GetDeviceProfile()))
+		{
+			return false;
+		}
+
+		var ordinal = DirectPlayAudioOrdinal(media.PlayMethod, media.MediaSourceInfo, streamIndex);
+		var tracks = MediaPlayer.GetAudioTracks().ToList();
+		if (ordinal is not { } index || index >= tracks.Count)
+		{
+			logger.LogWarning("Audio switch: stream {Index} is track {Ordinal} of the file, the player has {Count} tracks, asking the server", streamIndex, ordinal, tracks.Count);
+			return false;
+		}
+
+		logger.LogInformation("Audio switch: stream {Index} (track {Ordinal}) in {Player}, no new request", streamIndex, index, MediaPlayer.GetType().Name);
+		MediaPlayer.OpenAudioTrack(tracks[index].Id);
+		item.Selection = new PlaybackSelection(streamIndex, item.Selection?.SubtitleStreamIndex);
+		return true;
+	}
+
+	/// <summary>The current selection with the audio stream of the previous one, the subtitle of the current one is kept.</summary>
+	internal static PlaybackSelection? RestoreAudio(PlaybackSelection? current, PlaybackSelection? previous)
+	{
+		if (previous is null && current?.SubtitleStreamIndex is null)
+		{
+			return null;
+		}
+
+		return new PlaybackSelection(previous?.AudioStreamIndex, current?.SubtitleStreamIndex ?? previous?.SubtitleStreamIndex);
+	}
+
+	/// <summary>
+	/// The player failed after it accepted the media, which is how a stream that cannot be opened fails for the players that open it in
+	/// the background (Windows Media Player, VLC): as when the request fails, a pick in the audio menu loads the item again, the stream
+	/// that failed too, at the position it was to play at, paused or not as it was. Read before the player is stopped, which forgets it.
+	/// </summary>
+	private void KeepForRetry()
+	{
+		if (Playlist.SelectedItem is not { } item || MediaPlayer is not { } mp)
+		{
+			return;
+		}
+
+		long? ticks = mp.Position.Ticks is > 0 and var position ? position : null;
+		var previous = _audioSwitch is { } pending && ReferenceEquals(pending.Item, item) ? pending : null;
+		_audioSwitch = new AudioSwitchState(item, ticks ?? previous?.Ticks, previous?.Paused ?? !mp.IsPlaying, previous?.PreviousSelection ?? item.Selection);
+		_loadFailed = true;
+		logger.LogInformation("Playback failed, a pick in the audio menu loads {Name} again at {Ticks}, paused={Paused}", item.Dto.Name, _audioSwitch.Ticks, _audioSwitch.Paused);
+	}
+
+	private sealed record AudioSwitchState(PlaylistItem Item, long? Ticks, bool Paused, PlaybackSelection? PreviousSelection);
+
+	private AudioSwitchState? _audioSwitch;
+
+	/// <param name="resumeTicks">Where to continue when the same item is loaded again with another audio stream, instead of the saved position.</param>
+	/// <param name="startPaused">For the same reload: whether it stays paused. Null for another item, which plays.</param>
+	internal async Task<bool> LoadSelectedItem(long? resumeTicks = null, bool? startPaused = null)
+	{
+		if (MediaPlayer is null)
+		{
+			return false;
+		}
+
+		if (Playlist.SelectedItem is not { Dto.Id: not null } selectedItem)
+		{
+			return false;
+		}
+
+		var version = Interlocked.Increment(ref _loadVersion);
+		var startTicks = resumeTicks ?? selectedItem.Dto.UserData?.PlaybackPositionTicks;
+		TimeSpan? hold = startTicks is > 0 ? TimeSpan.FromTicks(startTicks.Value) : null;
+
+		// clean up the previous session first, whether or not the new media can be loaded. Another item plays (the player stopped
+		// at the end of the previous one, that is no pause of the user), the same item loaded again keeps playing or stays paused
+		await StopPlayback(holdPosition: hold, reloading: true, play: startPaused is not true);
+
+		// the teardown takes a round trip to the server: another load may have started and finished meanwhile, the player is its
+		if (version != _loadVersion)
+		{
+			return false;
+		}
 
 		var full = await JellyfinClient.GetItem(selectedItem.Dto.Id.Value);
 
 		if (full is null || version != _loadVersion)
 		{
-			return;
+			if (version == _loadVersion)
+			{
+				await StopPlayback();
+			}
+
+			return false;
 		}
 
 		var mediaResponse = await GetMediaUrl(full, selectedItem.Selection);
 
 		if (mediaResponse is null || version != _loadVersion)
 		{
-			return;
+			if (version == _loadVersion)
+			{
+				await StopPlayback();
+			}
+
+			return false;
 		}
 
 		TrickplayViewModel.SetItem(full);
@@ -276,6 +476,9 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		session.PositionProvider = GetKnownPosition;
 		_session = session;
 
+		var sourceMenu = BuildSourceAudioMenu(mediaResponse.MediaSourceInfo, audioIndex, index => SwitchAudioStream(selectedItem, index));
+		MediaPlayer.SourceAudioMenu = sourceMenu;
+		logger.LogInformation("Audio menu: {Count} source audio streams, selected stream {Selected}", sourceMenu?.Tracks.Count ?? 0, sourceMenu?.SelectedId);
 		var audioOrdinal = DirectPlayAudioOrdinal(mediaResponse.PlayMethod, mediaResponse.MediaSourceInfo, audioIndex);
 
 		LogMediaInfo(selectedItem.Dto, mediaResponse, selection, audioIndex, subtitleIndex);
@@ -285,14 +488,20 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			logger.LogError("Unable to open media from {URL} ({Playback})", mediaResponse.Uri.MaskApiKey(), DescribePlayback());
 			await StopPlayback();
-			return;
+			return false;
 		}
 
 		PlayMethod = mediaResponse.PlayMethod;
 
-		if (selectedItem.Dto.UserData?.PlaybackPositionTicks is { } ticks)
+		if (startTicks is > 0)
 		{
-			MediaPlayer.SeekTo(TimeSpan.FromTicks(ticks));
+			MediaPlayer.SeekTo(TimeSpan.FromTicks(startTicks.Value));
+		}
+
+		// loaded, the next audio switch starts from the position of this one
+		if (_audioSwitch is { } done && ReferenceEquals(done.Item, selectedItem))
+		{
+			_audioSwitch = null;
 		}
 
 		if (mediaResponse.MediaSourceInfo.MediaStreams?.FirstOrDefault(x => x.Type == MediaStream_Type.Subtitle && x.Index == subtitleIndex) is { } subtitleStream)
@@ -310,6 +519,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 
 		await playbackSessions.ReportStartAsync(session, GetPlaybackState(MediaPlayer));
+		return true;
 	}
 
 	/// <summary>
@@ -434,6 +644,46 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		return ordinal >= 0 ? ordinal : null;
 	}
 
+	/// <summary>
+	/// The audio menu lists the audio streams of the source file for every play method: the player only knows the stream of a transcode,
+	/// and a stream that a direct play player could not decode needs the server to transcode it. Picking one therefore always asks the
+	/// server for it again, which decides between direct play and transcoding. Names also come from one place, the players differ.
+	/// </summary>
+	internal static SourceAudioMenu? BuildSourceAudioMenu(MediaSourceInfo source, int? audioIndex, Action<int> switchTo)
+	{
+		var tracks = BuildSourceAudioTracks(source);
+		if (tracks.Count < 2)
+		{
+			return null;
+		}
+
+		var selected = audioIndex is { } index && tracks.Any(x => x.Id == index) ? index : tracks[0].Id;
+		return new SourceAudioMenu(tracks, selected, track => switchTo(track.Id));
+	}
+
+	internal static List<AudioTrack> BuildSourceAudioTracks(MediaSourceInfo source) =>
+		source.MediaStreams?
+			.Where(x => x.Type == MediaStream_Type.Audio && x.Index is not null)
+			.Select(x => new AudioTrack(x.Index!.Value, LanguageName(x.Language), x.DisplayTitle ?? x.Codec))
+			.ToList() ?? [];
+
+	/// <summary>
+	/// The players name the language of a track ("Chinese") while the server only has its ISO code ("zho"), the menu shows the
+	/// name in both cases. A code that is not known is kept.
+	/// </summary>
+	internal static string? LanguageName(string? code)
+	{
+		if (string.IsNullOrWhiteSpace(code))
+		{
+			return code;
+		}
+
+		var culture = CultureInfo.GetCultures(CultureTypes.NeutralCultures)
+			.FirstOrDefault(x => x.ThreeLetterISOLanguageName.Equals(code, StringComparison.OrdinalIgnoreCase)
+				|| x.TwoLetterISOLanguageName.Equals(code, StringComparison.OrdinalIgnoreCase));
+		return culture?.EnglishName ?? code;
+	}
+
 	private void LogMediaInfo(BaseItemDto item, MediaResponse response, PlaybackSelection? selection, int? audioIndex, int? subtitleIndex)
 	{
 		var source = response.MediaSourceInfo;
@@ -486,6 +736,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 	{
 		{ State: MediaPlayerState.Playing or MediaPlayerState.Paused } mp => mp.Position.Ticks,
 		{ State: MediaPlayerState.Ended, Position.Ticks: > 0 } mp => mp.Position.Ticks,
+		{ Position.Ticks: > 0 } mp when _audioSwitch is not null => mp.Position.Ticks,
 		_ => null,
 	};
 
@@ -538,7 +789,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 			$"Url: {media?.Uri}").MaskApiKey();
 	}
 
-	private void SubscribeEvents(IMediaPlayerController mp)
+	internal void SubscribeEvents(IMediaPlayerController mp)
 	{
 		mp.Playing.Where(_ => _disposables.IsDisposed).Subscribe(_ => mp.Stop());
 		// the backends raise these on their own native threads, stopping a player from there can deadlock. The session is read where
@@ -562,6 +813,7 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		{
 			// described before the session is stopped, the backends do not report what went wrong
 			logger.LogError("An error occurred while playing media ({Playback})", DescribePlayback());
+			KeepForRetry();
 			await StopPlayback();
 		});
 		mp.PositionChanged
@@ -700,4 +952,3 @@ public partial class VideoPlayerViewModel(IJellyfinClient jellyfinClient,
 		}
 	}
 }
-

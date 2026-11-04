@@ -113,15 +113,22 @@ public static class Converters
 
 	public static FlyoutBase? GetAudiosFlyout(IMediaPlayerController player, int defaultIndex)
 	{
-		var audios = player.GetAudioTracks().ToList();
+		var source = player.SourceAudioMenu;
+		var audios = source?.Tracks.ToList() ?? player.GetAudioTracks().ToList();
 
 		if (audios.Count < 2)
 		{
 			return null;
 		}
 
+		// the menu lists the streams of the source file, the same names for every player, and picking one asks the server for it
+		if (source is not null)
+		{
+			defaultIndex = source.SelectedId;
+		}
+
 		const string groupName = "Audios";
-		var command = new RelayCommand<AudioTrack>(track => player.OpenAudioTrack(track.Id));
+		var command = new RelayCommand<AudioTrack>(track => (source?.Select ?? (t => player.OpenAudioTrack(t.Id)))(track));
 
 		var flyout = new MenuBarItemFlyout();
 

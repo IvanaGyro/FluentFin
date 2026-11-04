@@ -57,6 +57,9 @@ public sealed partial class TransportControls : UserControl
 	public static readonly DependencyProperty PlayerProperty =
 		DependencyProperty.Register("Player", typeof(IMediaPlayerController), typeof(TransportControls), new PropertyMetadata(null, OnPlayerChanged));
 
+	/// <summary>The program sets the slider (position, length of the media): the change of its value is not a seek of the user.</summary>
+	private bool _updatingSlider;
+
 	private static void OnPlayerChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
 	{
 		var tc = (TransportControls)d;
@@ -66,13 +69,27 @@ public sealed partial class TransportControls : UserControl
 		}
 
 		TimeSpan duration = TimeSpan.Zero;
-		controller.DurationChanged.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
+		controller.DurationChanged.Where(d => d > TimeSpan.Zero).ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
 		{
-			tc.TimeSlider.Maximum = e.TotalMilliseconds;
 			duration = e;
+
+			// a value given before the length was known is clamped to the old length, the position is given again;
+			// neither the new length nor the value is a seek of the user
+			tc._updatingSlider = true;
+			try
+			{
+				tc.TimeSlider.Maximum = e.TotalMilliseconds;
+				tc.TimeSlider.Value = Math.Min(tc.TimeSlider.Maximum, controller.Position.TotalMilliseconds);
+			}
+			catch { }
+			finally
+			{
+				tc._updatingSlider = false;
+			}
 		});
 		controller.PositionChanged.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(e =>
 		{
+			tc._updatingSlider = true;
 			try
 			{
 				tc.TimeSlider.Value = e.TotalMilliseconds;
@@ -80,6 +97,10 @@ public sealed partial class TransportControls : UserControl
 				tc.TxtRemainingTime.Text = TimeRemaining(e, duration);
 			}
 			catch { }
+			finally
+			{
+				tc._updatingSlider = false;
+			}
 		});
 		controller.Playing.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(_ => tc.PlayPauseButton.Content = tc._pauseSymbol);
 		controller.Paused.ObserveOn(RxSchedulers.MainThreadScheduler).Subscribe(_ => tc.PlayPauseButton.Content = tc._playSymbol);
@@ -115,23 +136,13 @@ public sealed partial class TransportControls : UserControl
 		TimeSlider
 			.Events()
 			.ValueChanged
+			.Where(_ => !_updatingSlider)
 			.Where(x => Math.Abs(x.NewValue - Player.Position.TotalMilliseconds) > 5000)
 			.Subscribe(x =>
 			{
 				try
 				{
-					var currentState = Player.State;
-					if (currentState is MediaPlayerState.Playing)
-					{
-						Player.Pause();
-					}
-
 					Player.SeekTo(TimeSpan.FromMilliseconds(x.NewValue));
-
-					if (currentState is MediaPlayerState.Playing)
-					{
-						Player.Play();
-					}
 				}
 				catch { }
 			});

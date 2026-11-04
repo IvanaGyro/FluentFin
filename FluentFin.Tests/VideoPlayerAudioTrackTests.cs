@@ -1,3 +1,4 @@
+using FluentFin.Core.Contracts.Services;
 using FluentFin.ViewModels;
 using Jellyfin.Sdk.Generated.Models;
 
@@ -45,5 +46,109 @@ public sealed class VideoPlayerAudioTrackTests
 	public void NoSwitch_WithoutAnAudioStream(int? audioStreamIndex)
 	{
 		Assert.Null(VideoPlayerViewModel.DirectPlayAudioOrdinal(PlaybackProgressInfo_PlayMethod.DirectPlay, Source, audioStreamIndex));
+	}
+
+	[Fact]
+	public void SourceMenu_ListsTheAudioStreamsOfTheSourceByStreamIndex()
+	{
+		var tracks = VideoPlayerViewModel.BuildSourceAudioTracks(Source);
+
+		Assert.Equal(Enumerable.Range(1, 10), tracks.Select(x => x.Id));
+	}
+
+	[Theory]
+	[InlineData("zho", "Chinese")]
+	[InlineData("eng", "English")]
+	[InlineData("xxx", "xxx")]
+	[InlineData(null, null)]
+	public void SourceMenu_NamesTheLanguageLikeThePlayersDo(string? code, string? expected)
+	{
+		Assert.Equal(expected, VideoPlayerViewModel.LanguageName(code));
+	}
+
+	[Fact]
+	public void SourceMenu_IsBuiltForDirectPlayToo_SoThatTheWayBackToATranscodeExists()
+	{
+		var picked = new List<int>();
+		var menu = VideoPlayerViewModel.BuildSourceAudioMenu(Source, 2, picked.Add);
+
+		Assert.NotNull(menu);
+		Assert.Equal(2, menu!.SelectedId);
+
+		menu.Select(menu.Tracks[5]);
+		Assert.Equal([6], picked);
+	}
+
+	[Fact]
+	public void PickingTheStreamThatPlays_IsNoSwitch()
+	{
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
+
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(null, playing, 3));
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(null, playing, 4));
+	}
+
+	[Fact]
+	public void PickingTheFirstStreamAgain_WhileASwitchIsPending_SupersedesIt()
+	{
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
+
+		// 3 plays, 4 is picked and its request is pending (the selection is 4), then 3 is picked again
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(4, null), playing, 3));
+	}
+
+	[Fact]
+	public void SourceMenu_FallsBackToTheFirstStream_WhenTheServerGaveNone()
+	{
+		Assert.Equal(1, VideoPlayerViewModel.BuildSourceAudioMenu(Source, null, _ => { })!.SelectedId);
+		Assert.Equal(1, VideoPlayerViewModel.BuildSourceAudioMenu(Source, 42, _ => { })!.SelectedId);
+	}
+
+	[Fact]
+	public void SourceMenu_IsNotShown_ForASingleAudioStream()
+	{
+		var single = new MediaSourceInfo { MediaStreams = [new MediaStream { Index = 1, Type = MediaStream_Type.Audio }] };
+
+		Assert.Null(VideoPlayerViewModel.BuildSourceAudioMenu(single, 1, _ => { }));
+	}
+
+	[Fact]
+	public void ASwitch_HasFailed_WhenTheLoadDidNotEndInPlayback()
+	{
+		// no media, or the player could not open it: the media may have been assigned already, the load result is what counts
+		Assert.True(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, false, 1, 1));
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, true, 1, 1));
+		// another pick took over the selection
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(5, null), 4, false, 1, 1));
+		// a newer pick, also for the same stream, is in flight: this one was superseded
+		Assert.False(VideoPlayerViewModel.SwitchFailed(new PlaybackSelection(4, null), 4, false, 1, 3));
+	}
+
+	[Fact]
+	public void AFailedSwitch_RestoresTheAudio_AndKeepsTheSubtitleOfTheMeantime()
+	{
+		var previous = new PlaybackSelection(3, 7);
+		var current = new PlaybackSelection(4, PlaybackSelection.NoSubtitles);
+
+		Assert.Equal(new PlaybackSelection(3, PlaybackSelection.NoSubtitles), VideoPlayerViewModel.RestoreAudio(current, previous));
+	}
+
+	[Fact]
+	public void AFailedSwitch_WithoutAnyPreviousChoice_GoesBackToTheServerDefault()
+	{
+		Assert.Null(VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, null), null));
+		Assert.Equal(new PlaybackSelection(null, 9), VideoPlayerViewModel.RestoreAudio(new PlaybackSelection(4, 9), null));
+	}
+
+	[Fact]
+	public void AfterAFailedSwitch_EveryPickIsASwitch_AlsoTheStreamThatPlayedBefore()
+	{
+		var playing = new MediaSourceInfo { DefaultAudioStreamIndex = 3 };
+
+		// the selection is back at 3 and nothing plays
+		Assert.False(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3, loadFailed: false));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(new PlaybackSelection(3, null), playing, 3, loadFailed: true));
+		Assert.True(VideoPlayerViewModel.IsAudioSwitch(null, playing, 3, loadFailed: true));
 	}
 }

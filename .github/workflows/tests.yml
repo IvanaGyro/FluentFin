@@ -10,6 +10,8 @@ jobs:
   tests:
     name: 'Unit and style tests'
     runs-on: windows-latest
+    # a test that hangs (a player that never answers) must end the run, not hold the runner for six hours
+    timeout-minutes: 90
     steps:
     -   name: 'Checkout'
         uses: actions/checkout@v4
@@ -42,7 +44,24 @@ jobs:
             Start-Service Audiosrv
 
     -   name: 'Test the app'
-        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --blame-hang-timeout 4m --blame-hang-dump-type full --results-directory TestResults --logger "console;verbosity=normal"
+
+    # a test that hangs leaves a dump of the test host: print the managed stacks of all its threads, they name the call that waits
+    -   name: 'Show the stacks of a test host that hung'
+        if: failure()
+        shell: pwsh
+        run: |
+            $dumps = Get-ChildItem -Path TestResults -Recurse -Filter *.dmp -ErrorAction SilentlyContinue
+            if (-not $dumps) { Write-Host 'no dump'; exit 0 }
+            dotnet tool install --global dotnet-dump
+            foreach ($dump in $dumps) {
+                Write-Host "== $($dump.FullName) ($([math]::Round($dump.Length / 1MB)) MB)"
+                dotnet-dump analyze $dump.FullName -c "clrstack -all" -c "syncblk" -c "exit"
+            }
+
+    # what Windows Media Player plays is measured with the peak meter of the device: show the numbers also when it passes
+    -   name: 'Show what Windows Media Player plays'
+        run: dotnet test FluentFin.Tests/FluentFin.Tests.csproj -c Release -p:Platform=x64 --no-build --blame-hang-timeout 5m --blame-hang-dump-type none --filter "FullyQualifiedName~WmpAudioPlaybackTests|FullyQualifiedName~WmpSeekTests|FullyQualifiedName~WmpSwitchTests" --logger "console;verbosity=detailed"
 
   # Flyleaf on arm64 runs native arm64 code (FFmpeg, XAudio2, the .NET runtime) that x64 does not: play audio there too.
   flyleaf-arm64:
